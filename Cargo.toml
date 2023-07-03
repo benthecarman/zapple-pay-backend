@@ -1,0 +1,23 @@
+[package]
+name = "zapple-pay"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "zapple-pay"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+axum = "0.6.16"
+bitcoin = "0.29.2"
+lightning = "0.0.115"
+lightning-invoice = "0.23.0"
+clap = { version = "4.1.14", features = ["derive"] }
+lnurl-rs = { version = "=0.2.4", default-features = false, features = ["blocking"] }
+nostr = { version = "=0.22.0-bitcoin-v0.29", default-features = false, features = ["nip47"] }
+nostr-sdk = "=0.22.0-bitcoin-v0.29"
+serde = "1.0"
+serde_json = "1.0"
+sled = "0.34.6"
+tokio = { version = "1.12.0", features = ["full"] }

@@ -1,13 +1,14 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use axum::http::{StatusCode, Uri};
+use axum::http::{Method, StatusCode, Uri};
 use axum::routing::{get, post};
-use axum::{Extension, Router};
+use axum::{http, Extension, Router};
 use clap::Parser;
 use sled::Db;
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::*;
 use crate::routes::*;
@@ -54,7 +55,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/set-user", post(set_user_config))
         .route("/get-user/:npub", get(get_user_config))
         .fallback(fallback)
-        .layer(Extension(state.clone()));
+        .layer(Extension(state.clone()))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_headers(vec![http::header::CONTENT_TYPE])
+                .allow_methods([Method::GET, Method::POST]),
+        );
 
     let server = axum::Server::bind(&addr).serve(server_router.into_make_service());
 

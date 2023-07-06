@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -6,7 +8,10 @@ use axum::routing::{get, post};
 use axum::{http, Extension, Router};
 use bitcoin::hashes::hex::ToHex;
 use clap::Parser;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::{SecretKey, XOnlyPublicKey};
+use nostr::Keys;
+use serde::{Deserialize, Serialize};
+use serde_json::{from_reader, to_string};
 use sled::Db;
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
@@ -30,13 +35,26 @@ pub struct State {
 async fn main() -> anyhow::Result<()> {
     let config: Config = Config::parse();
 
-    // Create the database if it doesn't exist
-    if let Some(parent_dir) = PathBuf::from(&config.db_path).parent() {
-        std::fs::create_dir_all(parent_dir)?;
+    // Create the datadir if it doesn't exist
+    let path = PathBuf::from(&config.data_dir);
+    std::fs::create_dir_all(path.clone())?;
+
+    let db_path = {
+        let mut path = path.clone();
+        path.push("sled.db");
+        path
     };
 
     // DB management
-    let db = sled::open(&config.db_path)?;
+    let db = sled::open(&db_path)?;
+
+    let keys_path = {
+        let mut path = path.clone();
+        path.push("keys.json");
+        path
+    };
+
+    let keys = get_keys(keys_path);
 
     let mut start = vec![];
     db.scan_prefix("").for_each(|res| {
@@ -77,7 +95,11 @@ async fn main() -> anyhow::Result<()> {
 
     let server = axum::Server::bind(&addr).serve(server_router.into_make_service());
 
-    tokio::spawn(subscriber::start_subscription(state.db, rx));
+    tokio::spawn(subscriber::start_subscription(
+        state.db,
+        rx,
+        keys.server_keys(),
+    ));
 
     let graceful = server.with_graceful_shutdown(async {
         tokio::signal::ctrl_c()
@@ -95,4 +117,42 @@ async fn main() -> anyhow::Result<()> {
 
 async fn fallback(uri: Uri) -> (StatusCode, String) {
     (StatusCode::NOT_FOUND, format!("No route for {}", uri))
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ZapplePayKeys {
+    server_key: SecretKey,
+}
+
+impl ZapplePayKeys {
+    fn generate() -> Self {
+        let server_key = Keys::generate();
+
+        ZapplePayKeys {
+            server_key: server_key.secret_key().unwrap(),
+        }
+    }
+
+    fn server_keys(&self) -> Keys {
+        Keys::new(self.server_key)
+    }
+}
+
+fn get_keys(path: PathBuf) -> ZapplePayKeys {
+    match File::open(&path) {
+        Ok(file) => {
+            let reader = BufReader::new(file);
+            from_reader(reader).expect("Could not parse JSON")
+        }
+        Err(_) => {
+            let keys = ZapplePayKeys::generate();
+            let json_str = to_string(&keys).expect("Could not serialize data");
+
+            let mut file = File::create(path).expect("Could not create file");
+            file.write_all(json_str.as_bytes())
+                .expect("Could not write to file");
+
+            keys
+        }
+    }
 }

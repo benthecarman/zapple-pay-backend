@@ -8,7 +8,7 @@ use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::encrypt;
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
 use sled::Db;
@@ -17,9 +17,11 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch::Receiver;
 
-pub async fn start_subscription(db: Db, rx: Receiver<Vec<String>>) -> anyhow::Result<()> {
-    // just need ephemeral keys for this
-    let keys = Keys::generate();
+pub async fn start_subscription(
+    db: Db,
+    rx: Receiver<Vec<String>>,
+    keys: Keys,
+) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_blocking()?;
 
     let cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -53,9 +55,11 @@ pub async fn start_subscription(db: Db, rx: Receiver<Vec<String>>) -> anyhow::Re
                         let db = db.clone();
                         let lnurl_client = lnurl_client.clone();
                         let cache = cache.clone();
+                        let keys = keys.clone();
                         async move {
                             if let Err(e) =
-                                handle_reaction(&db, &lnurl_client, event, cache.clone()).await
+                                handle_reaction(&db, &lnurl_client, event, &keys, cache.clone())
+                                    .await
                             {
                                 eprintln!("Error: {e}");
                             }
@@ -71,6 +75,7 @@ async fn handle_reaction(
     db: &Db,
     lnurl_client: &BlockingClient,
     event: Event,
+    keys: &Keys,
     cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
 ) -> anyhow::Result<()> {
     println!("Received reaction: {event:?}");
@@ -179,6 +184,7 @@ async fn handle_reaction(
 
         // pay to lnurl
         pay_to_lnurl(
+            keys,
             Some(p_tag),
             Some(event_id),
             lnurl,
@@ -190,6 +196,7 @@ async fn handle_reaction(
         // pay donations too
         for donation in user.donations() {
             pay_to_lnurl(
+                keys,
                 None,
                 None,
                 donation.lnurl,
@@ -207,6 +214,7 @@ async fn handle_reaction(
 }
 
 async fn pay_to_lnurl(
+    keys: &Keys,
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     lnurl: LnUrl,
@@ -218,18 +226,16 @@ async fn pay_to_lnurl(
     let invoice = if let LnUrlPayResponse(pay) = resp {
         let zap_request = match user_key {
             Some(user_key) => {
-                let keys = Keys::generate();
                 let mut tags = vec![
                     Tag::PubKey(user_key, None),
                     Tag::Amount(amount_msats),
                     Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
-                    Tag::Generic(TagKind::Custom("anon".to_string()), vec![]),
                 ];
                 if let Some(event_id) = event_id {
                     tags.push(Tag::Event(event_id, None, None));
                 }
                 EventBuilder::new(Kind::ZapRequest, "", &tags)
-                    .to_event(&keys)
+                    .to_event(keys)
                     .ok()
             }
             None => None,

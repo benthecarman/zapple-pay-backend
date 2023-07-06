@@ -4,9 +4,9 @@ use clap::Parser;
 #[command(version, author, about)]
 /// A tool for zapping based on reactions to notes.
 pub struct Config {
-    #[clap(default_value_t = String::from("sled.db"), long)]
-    /// Location of database file
-    pub db_path: String,
+    #[clap(default_value_t = String::from("."), long)]
+    /// Location of database and keys files
+    pub data_dir: String,
     #[clap(default_value_t = String::from("0.0.0.0"), long)]
     /// Bind address for zap-tunnel's webserver
     pub bind: String,

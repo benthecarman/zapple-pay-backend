@@ -48,10 +48,18 @@ pub async fn start_subscription(db: Db, rx: Receiver<Vec<String>>) -> anyhow::Re
         while let Ok(notification) = notifications.recv().await {
             if let RelayPoolNotification::Event(_url, event) = notification {
                 if event.kind == Kind::Reaction {
-                    if let Err(e) = handle_reaction(&db, &lnurl_client, event, cache.clone()).await
-                    {
-                        eprintln!("Error: {e}");
-                    }
+                    tokio::spawn({
+                        let db = db.clone();
+                        let lnurl_client = lnurl_client.clone();
+                        let cache = cache.clone();
+                        async move {
+                            if let Err(e) =
+                                handle_reaction(&db, &lnurl_client, event, cache.clone()).await
+                            {
+                                eprintln!("Error: {e}");
+                            }
+                        }
+                    });
                 }
             }
         }

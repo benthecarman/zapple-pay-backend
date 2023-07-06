@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use axum::http::{Method, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{http, Extension, Router};
+use bitcoin::hashes::hex::ToHex;
 use clap::Parser;
+use nostr::key::XOnlyPublicKey;
 use sled::Db;
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
@@ -36,7 +38,16 @@ async fn main() -> anyhow::Result<()> {
     // DB management
     let db = sled::open(&config.db_path)?;
 
-    let (tx, rx) = watch::channel(Vec::<String>::new());
+    let mut start = vec![];
+    db.scan_prefix("").for_each(|res| {
+        res.map(|(k, _)| {
+            let xonly = XOnlyPublicKey::from_slice(&k).unwrap();
+            start.push(xonly.to_hex());
+        })
+        .unwrap();
+    });
+
+    let (tx, rx) = watch::channel(start);
 
     let tx_shared = Arc::new(Mutex::new(tx));
 

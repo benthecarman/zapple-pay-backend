@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::http::{Method, StatusCode, Uri};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{http, Extension, Router};
 use bitcoin::hashes::hex::ToHex;
 use clap::Parser;
@@ -64,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     let server_router = Router::new()
         .route("/set-user", post(set_user_config))
+        .route("/delete-user/:npub", get(delete_user_config))
         // .route("/get-user/:npub", get(get_user_config))
         .fallback(fallback)
         .layer(Extension(state.clone()))

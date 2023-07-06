@@ -71,3 +71,8 @@ pub fn get_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<Option<UserConf
         None => Ok(None),
     }
 }
+
+pub fn delete_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<()> {
+    db.remove(npub.serialize())?;
+    Ok(())
+}

@@ -172,8 +172,25 @@ pub async fn get_user_config(
         )
     })?;
     match get_user_config_impl(npub, &state.db) {
-		Ok(Some(res)) => Ok(Json(res)),
-		Ok(None) => Err((StatusCode::NOT_FOUND, String::from("{\"status\":\"ERROR\",\"reason\":\"The user you're searching for could not be found.\"}"))),
-		Err(e) => Err(handle_anyhow_error(e)),
-	}
+        Ok(Some(res)) => Ok(Json(res)),
+        Ok(None) => Err((StatusCode::NOT_FOUND, String::from("{\"status\":\"ERROR\",\"reason\":\"The user you're searching for could not be found.\"}"))),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
+pub async fn delete_user_config(
+    Path(npub): Path<String>,
+    Extension(state): Extension<State>,
+) -> Result<Json<()>, (StatusCode, String)> {
+    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
+        )
+    })?;
+
+    match crate::db::delete_user(&state.db, npub) {
+        Ok(_) => Ok(Json(())),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
 }

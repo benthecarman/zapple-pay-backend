@@ -8,8 +8,9 @@ use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::encrypt;
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Metadata, Tag, TagKind, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
+use serde_json::Value;
 use sled::Db;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -137,17 +138,23 @@ async fn handle_reaction(
                     while let Ok(notification) = notifications.recv().await {
                         if let RelayPoolNotification::Event(_url, event) = notification {
                             if event.pubkey == p_tag && event.kind == Kind::Metadata {
-                                let metadata = Metadata::from_json(&event.content)?;
-                                // parse lnurl
-                                if let Some(lud06) = metadata.lud06 {
-                                    if let Ok(url) = LnUrl::from_str(&lud06) {
+                                let json: Value = serde_json::from_str(&event.content)?;
+                                if let Value::Object(map) = json {
+                                    let lud06 = map
+                                        .get("lud06")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| LnUrl::from_str(s).ok());
+                                    // parse lnurl
+                                    if let Some(url) = lud06 {
                                         lnurl = Some(url);
                                         break;
                                     }
-                                }
-                                // try lightning address
-                                if let Some(lud16) = metadata.lud16 {
-                                    if let Ok(lnaddr) = LightningAddress::from_str(&lud16) {
+                                    let lud16 = map
+                                        .get("lud16")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| LightningAddress::from_str(s).ok());
+                                    // try lightning address
+                                    if let Some(lnaddr) = lud16 {
                                         lnurl = Some(lnaddr.lnurl());
                                         break;
                                     }

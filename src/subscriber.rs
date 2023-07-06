@@ -83,9 +83,22 @@ async fn handle_reaction(
         }
     });
 
-    let event_id = match event_id {
+    let _event_id = match event_id {
         None => return Err(anyhow!("No e tag found")),
         Some(e) => e,
+    };
+
+    let p_tag = event.tags.into_iter().find_map(|tag| {
+        if let Tag::PubKey(p, _) = tag {
+            Some(p)
+        } else {
+            None
+        }
+    });
+
+    let p_tag = match p_tag {
+        None => return Err(anyhow!("No p tag found")),
+        Some(p) => p,
     };
 
     if let Some(user) = get_user(db, event.pubkey)? {
@@ -103,38 +116,18 @@ async fn handle_reaction(
         client.add_relay("wss://relay.damus.io", None).await?;
         client.connect().await;
 
-        let event_filter = Filter::new().event(event_id).limit(1);
-        client.subscribe(vec![event_filter]).await;
-
-        let mut original_event: Option<Event> = None;
-        let mut notifications = client.notifications();
-        // todo time this out
-        while let Ok(notification) = notifications.recv().await {
-            if let RelayPoolNotification::Event(_url, event) = notification {
-                if event.id == event_id {
-                    original_event = Some(event);
-                    break;
-                }
-            };
-        }
-
-        // handle None case
-        let original_event: Event = match original_event {
-            None => return Err(anyhow!("No original event found")),
-            Some(original_event) => original_event,
-        };
-
         let lnurl = {
             let cache_result = {
                 let cache = cache.lock().unwrap();
-                cache.get(&original_event.pubkey).cloned()
+                cache.get(&p_tag).cloned()
             };
             match cache_result {
                 Some(lnurl) => lnurl,
                 None => {
+                    println!("No lnurl in cache, fetching...");
                     let metadata_filter = Filter::new()
                         .kind(Kind::Metadata)
-                        .author(original_event.pubkey.to_hex())
+                        .author(p_tag.to_hex())
                         .limit(1);
                     client.subscribe(vec![metadata_filter]).await;
 
@@ -143,8 +136,7 @@ async fn handle_reaction(
                     // todo time this out
                     while let Ok(notification) = notifications.recv().await {
                         if let RelayPoolNotification::Event(_url, event) = notification {
-                            if event.pubkey == original_event.pubkey && event.kind == Kind::Metadata
-                            {
+                            if event.pubkey == p_tag && event.kind == Kind::Metadata {
                                 let metadata = Metadata::from_json(&event.content)?;
                                 // parse lnurl
                                 if let Some(lud06) = metadata.lud06 {
@@ -171,7 +163,7 @@ async fn handle_reaction(
                     };
 
                     let mut cache = cache.lock().unwrap();
-                    cache.insert(original_event.pubkey, lnurl.clone());
+                    cache.insert(p_tag, lnurl.clone());
 
                     lnurl
                 }
@@ -190,6 +182,8 @@ async fn handle_reaction(
             )
             .await?;
         }
+    } else {
+        return Err(anyhow!("User not found"));
     }
 
     Ok(())

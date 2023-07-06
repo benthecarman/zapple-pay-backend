@@ -21,6 +21,7 @@ pub struct SetUserConfig {
     pub npub: XOnlyPublicKey,
     pub amount_sats: u64,
     nwc: String,
+    pub emoji: Option<String>,
     donations: Option<Vec<DonationConfig>>,
 }
 
@@ -71,6 +72,7 @@ impl SetUserConfig {
         Ok(crate::db::UserConfig::new(
             self.amount_sats,
             NostrWalletConnectURI::from_str(&self.nwc)?,
+            self.emoji,
             donations,
         ))
     }
@@ -150,6 +152,7 @@ pub(crate) fn get_user_config_impl(
                 npub,
                 amount_sats: user.amount_sats,
                 nwc: user.nwc().to_string(),
+                emoji: Some(user.emoji()),
                 donations,
             }
         })

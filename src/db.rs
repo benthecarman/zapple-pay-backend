@@ -9,6 +9,7 @@ use std::str::FromStr;
 pub struct UserConfig {
     pub amount_sats: u64,
     nwc: String,
+    emoji: Option<String>,
     donations: Option<Vec<DonationConfig>>,
 }
 
@@ -16,6 +17,7 @@ impl UserConfig {
     pub fn new(
         amount_sats: u64,
         nwc: NostrWalletConnectURI,
+        emoji: Option<String>,
         donations: Vec<DonationConfig>,
     ) -> Self {
         let donations = if donations.is_empty() {
@@ -27,12 +29,17 @@ impl UserConfig {
         UserConfig {
             amount_sats,
             nwc: nwc.to_string(),
+            emoji,
             donations,
         }
     }
 
     pub fn nwc(&self) -> NostrWalletConnectURI {
         NostrWalletConnectURI::from_str(&self.nwc).unwrap()
+    }
+
+    pub fn emoji(&self) -> String {
+        self.emoji.clone().unwrap_or("⚡".to_string())
     }
 
     pub fn donations(&self) -> Vec<DonationConfig> {

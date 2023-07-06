@@ -47,7 +47,7 @@ pub async fn start_subscription(db: Db, rx: Receiver<Vec<String>>) -> anyhow::Re
         let mut notifications = client.notifications();
         while let Ok(notification) = notifications.recv().await {
             if let RelayPoolNotification::Event(_url, event) = notification {
-                if event.kind == Kind::Reaction && event.content == "⚡" {
+                if event.kind == Kind::Reaction {
                     if let Err(e) = handle_reaction(&db, &lnurl_client, event, cache.clone()).await
                     {
                         eprintln!("Error: {e}");
@@ -80,6 +80,10 @@ async fn handle_reaction(
     };
 
     if let Some(user) = get_user(db, event.pubkey)? {
+        if user.emoji() != event.content {
+            return Ok(());
+        }
+
         let nwc = user.nwc();
 
         let client = Client::new(&Keys::generate());

@@ -8,7 +8,7 @@ use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::encrypt;
-use nostr::{Event, EventBuilder, Filter, Keys, Kind, Metadata, Tag, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Metadata, Tag, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use sled::Db;
 use std::collections::HashMap;
@@ -83,7 +83,7 @@ async fn handle_reaction(
         }
     });
 
-    let _event_id = match event_id {
+    let event_id = match event_id {
         None => return Err(anyhow!("No e tag found")),
         Some(e) => e,
     };
@@ -171,10 +171,20 @@ async fn handle_reaction(
         };
 
         // pay to lnurl
-        pay_to_lnurl(lnurl, lnurl_client, user.amount_sats * 1_000, &nwc).await?;
+        pay_to_lnurl(
+            Some(p_tag),
+            Some(event_id),
+            lnurl,
+            lnurl_client,
+            user.amount_sats * 1_000,
+            &nwc,
+        )
+        .await?;
         // pay donations too
         for donation in user.donations() {
             pay_to_lnurl(
+                None,
+                None,
                 donation.lnurl,
                 lnurl_client,
                 donation.amount_sats * 1_000,
@@ -190,6 +200,8 @@ async fn handle_reaction(
 }
 
 async fn pay_to_lnurl(
+    user_key: Option<XOnlyPublicKey>,
+    event_id: Option<EventId>,
     lnurl: LnUrl,
     lnurl_client: &BlockingClient,
     amount_msats: u64,
@@ -197,7 +209,24 @@ async fn pay_to_lnurl(
 ) -> anyhow::Result<()> {
     let resp = lnurl_client.make_request(&lnurl.url)?;
     let invoice = if let LnUrlPayResponse(pay) = resp {
-        lnurl_client.get_invoice(&pay, amount_msats)?.invoice()
+        let zap_request = match user_key {
+            Some(user_key) => {
+                let keys = Keys::generate();
+                EventBuilder::new_zap_request(
+                    user_key,
+                    event_id,
+                    Some(amount_msats),
+                    Some(lnurl.to_string()),
+                )
+                .to_event(&keys)
+                .ok()
+            }
+            None => None,
+        };
+
+        lnurl_client
+            .get_invoice(&pay, amount_msats, zap_request)?
+            .invoice()
     } else {
         return Err(anyhow::anyhow!("Invalid lnurl response"));
     };

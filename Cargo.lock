@@ -872,8 +872,7 @@ checksum = "09fc20d2ca12cb9f044c93e3bd6d32d523e6e2ec3db4f7b2939cd99026ecd3f0"
 [[package]]
 name = "lnurl-rs"
 version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6642f727b5db59936373fd7a02c24cc76a0169b160e1e344f7f23d136f6f8e15"
+source = "git+https://github.com/benthecarman/lnurl-rs?branch=zaps#a66641ee078dffc78ccd752decdebb392ed21bd5"
 dependencies = [
  "anyhow",
  "bech32",
@@ -881,10 +880,12 @@ dependencies = [
  "bitcoin_hashes 0.12.0",
  "email_address",
  "lightning-invoice",
+ "nostr",
  "serde",
  "serde_json",
  "ureq",
  "url",
+ "urlencoding",
 ]
 
 [[package]]
@@ -1811,6 +1812,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8db7427f936968176eaa7cdf81b7f98b980b18495ec28f1b5791ac3bfe3eea9"
 
 [[package]]
 name = "utf-8"

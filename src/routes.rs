@@ -127,6 +127,7 @@ pub async fn set_user_config(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_user_config_impl(
     npub: XOnlyPublicKey,
     db: &Db,
@@ -159,6 +160,7 @@ pub(crate) fn get_user_config_impl(
     })
 }
 
+#[allow(dead_code)]
 pub async fn get_user_config(
     Path(npub): Path<String>,
     Extension(state): Extension<State>,

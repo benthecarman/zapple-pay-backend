@@ -9,11 +9,15 @@ Zapple Pay lets you automatically zap notes based on if you give a ⚡ reaction.
 `POST /set-user`
 
 payload:
+
+the emoji and donations are optional
+
 ```json
 {
   "npub": "user's npub",
   "amount_sats": 1000,
   "nwc": "user's nwc",
+  "emoji": "⚡",
   "donations": [
     {
       "amount_sats": 1000,
@@ -22,7 +26,9 @@ payload:
   ]
 }
 ```
+
 returns:
+
 ```json
 null
 ```
@@ -32,11 +38,13 @@ null
 `GET /get-user/:npub`
 
 returns:
+
 ```json
 {
   "npub": "user's npub",
   "amount_sats": 1000,
   "nwc": "user's nwc",
+  "emoji": "⚡",
   "donations": [
     {
       "amount_sats": 1000,

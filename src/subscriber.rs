@@ -64,6 +64,7 @@ async fn handle_reaction(
     event: Event,
     cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
 ) -> anyhow::Result<()> {
+    println!("Received reaction: {event:?}");
     let mut tags = event.tags.clone();
     tags.reverse();
     let event_id = tags.into_iter().find_map(|tag| {

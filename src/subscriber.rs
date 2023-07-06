@@ -212,14 +212,9 @@ async fn pay_to_lnurl(
         let zap_request = match user_key {
             Some(user_key) => {
                 let keys = Keys::generate();
-                EventBuilder::new_zap_request(
-                    user_key,
-                    event_id,
-                    Some(amount_msats),
-                    Some(lnurl.to_string()),
-                )
-                .to_event(&keys)
-                .ok()
+                EventBuilder::new_zap_request::<String>(user_key, event_id, None, None)
+                    .to_event(&keys)
+                    .ok()
             }
             None => None,
         };

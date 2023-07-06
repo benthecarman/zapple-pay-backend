@@ -69,9 +69,13 @@ impl SetUserConfig {
             })
             .collect::<Vec<crate::db::DonationConfig>>();
 
+        let nwc = self
+            .nwc
+            .replace("nostrwalletconnect", "nostr+walletconnect");
+
         Ok(crate::db::UserConfig::new(
             self.amount_sats,
-            NostrWalletConnectURI::from_str(&self.nwc)?,
+            NostrWalletConnectURI::from_str(&nwc)?,
             self.emoji,
             donations,
         ))

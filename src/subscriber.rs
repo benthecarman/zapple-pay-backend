@@ -8,7 +8,7 @@ use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::encrypt;
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Metadata, Tag, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Metadata, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use sled::Db;
 use std::collections::HashMap;
@@ -212,7 +212,16 @@ async fn pay_to_lnurl(
         let zap_request = match user_key {
             Some(user_key) => {
                 let keys = Keys::generate();
-                EventBuilder::new_zap_request::<String>(user_key, event_id, None, None)
+                let mut tags = vec![
+                    Tag::PubKey(user_key, None),
+                    Tag::Amount(amount_msats),
+                    Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
+                    Tag::Generic(TagKind::Custom("anon".to_string()), vec![]),
+                ];
+                if let Some(event_id) = event_id {
+                    tags.push(Tag::Event(event_id, None, None));
+                }
+                EventBuilder::new(Kind::ZapRequest, "", &tags)
                     .to_event(&keys)
                     .ok()
             }

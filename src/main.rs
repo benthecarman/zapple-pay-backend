@@ -83,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
     let server_router = Router::new()
         .route("/set-user", post(set_user_config))
         .route("/delete-user/:npub", get(delete_user_config))
+        .route("/count", get(count))
         // .route("/get-user/:npub", get(get_user_config))
         .fallback(fallback)
         .layer(Extension(state.clone()))

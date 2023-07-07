@@ -198,3 +198,9 @@ pub async fn delete_user_config(
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }
+
+pub async fn count(
+    Extension(state): Extension<State>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    Ok(Json(state.db.len()))
+}

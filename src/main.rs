@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use axum::http::{Method, StatusCode, Uri};
@@ -10,9 +11,9 @@ use bitcoin::hashes::hex::ToHex;
 use clap::Parser;
 use nostr::key::{SecretKey, XOnlyPublicKey};
 use nostr::Keys;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{from_reader, to_string};
-use sled::Db;
+use sled::{Db, Serialize};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tower_http::cors::{Any, CorsLayer};
@@ -59,7 +60,11 @@ async fn main() -> anyhow::Result<()> {
     let mut start = vec![];
     db.scan_prefix("").for_each(|res| {
         res.map(|(k, _)| {
-            let xonly = XOnlyPublicKey::from_slice(&k).unwrap();
+            let str = String::from_utf8(k.serialize()).unwrap();
+            // drop last 2 characters
+            let str = &str[..str.len() - 2];
+
+            let xonly = XOnlyPublicKey::from_str(str).unwrap();
             start.push(xonly.to_hex());
         })
         .unwrap();
@@ -121,7 +126,7 @@ async fn fallback(uri: Uri) -> (StatusCode, String) {
     (StatusCode::NOT_FOUND, format!("No route for {}", uri))
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 struct ZapplePayKeys {
     server_key: SecretKey,
 }

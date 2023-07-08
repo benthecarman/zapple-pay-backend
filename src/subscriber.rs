@@ -1,6 +1,7 @@
 use crate::db::get_user;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
+use lightning_invoice::Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use lnurl::LnUrlResponse::LnUrlPayResponse;
@@ -220,15 +221,14 @@ async fn handle_reaction(
     Ok(())
 }
 
-async fn pay_to_lnurl(
+async fn get_invoice_from_lnurl(
     keys: &Keys,
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
-    lnurl: LnUrl,
+    lnurl: &LnUrl,
     lnurl_client: &BlockingClient,
     amount_msats: u64,
-    nwc: &NostrWalletConnectURI,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Invoice> {
     let resp = lnurl_client.make_request(&lnurl.url)?;
     let invoice = if let LnUrlPayResponse(pay) = resp {
         let zap_request = match user_key {
@@ -261,6 +261,28 @@ async fn pay_to_lnurl(
     {
         return Err(anyhow::anyhow!("Got invoice with invalid amount"));
     }
+
+    Ok(invoice)
+}
+
+async fn pay_to_lnurl(
+    keys: &Keys,
+    user_key: Option<XOnlyPublicKey>,
+    event_id: Option<EventId>,
+    lnurl: LnUrl,
+    lnurl_client: &BlockingClient,
+    amount_msats: u64,
+    nwc: &NostrWalletConnectURI,
+) -> anyhow::Result<()> {
+    let invoice =
+        match get_invoice_from_lnurl(keys, user_key, event_id, &lnurl, lnurl_client, amount_msats)
+            .await
+        {
+            Ok(invoice) => invoice,
+            Err(e) => {
+                return Err(anyhow!("Error getting invoice from lnurl ({lnurl}: {e}"));
+            }
+        };
 
     let event = create_nwc_request(nwc, invoice.to_string());
 

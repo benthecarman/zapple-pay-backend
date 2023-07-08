@@ -100,12 +100,12 @@ pub fn run_migration(db: &Db) -> anyhow::Result<usize> {
             let emoji = config.emoji();
             config.emoji = None;
 
-            let npub = XOnlyPublicKey::from_slice(key.as_ref()).unwrap();
+            if let Ok(npub) = XOnlyPublicKey::from_slice(key.as_ref()) {
+                upsert_user(db, npub, &emoji, config)?;
 
-            upsert_user(db, npub, &emoji, config)?;
-
-            db.remove(npub.serialize())?;
-            count += 1;
+                db.remove(npub.serialize())?;
+                count += 1;
+            }
         }
     }
 

@@ -58,7 +58,7 @@ pub async fn start_subscription(
         let mut notifications = client.notifications();
         while let Ok(notification) = notifications.recv().await {
             if let RelayPoolNotification::Event(_url, event) = notification {
-                if kinds.contains(&event.kind) {
+                if kinds.contains(&event.kind) && event.content.chars().count() == 1 {
                     tokio::spawn({
                         let db = db.clone();
                         let lnurl_client = lnurl_client.clone();

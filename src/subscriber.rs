@@ -4,6 +4,7 @@ use bitcoin::hashes::hex::ToHex;
 use lightning_invoice::Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
+use lnurl::pay::PayResponse;
 use lnurl::LnUrlResponse::LnUrlPayResponse;
 use lnurl::{AsyncClient, Builder};
 use nostr::key::XOnlyPublicKey;
@@ -26,7 +27,10 @@ pub async fn start_subscription(
 ) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_async()?;
 
-    let cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>> = Arc::new(Mutex::new(HashMap::new()));
+    let lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    let pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>> = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
         let client = Client::new(&keys);
@@ -56,11 +60,18 @@ pub async fn start_subscription(
                     tokio::spawn({
                         let db = db.clone();
                         let lnurl_client = lnurl_client.clone();
-                        let cache = cache.clone();
                         let keys = keys.clone();
+                        let lnurl_cache = lnurl_cache.clone();
+                        let pay_cache = pay_cache.clone();
                         async move {
-                            let fut =
-                                handle_reaction(&db, &lnurl_client, event, &keys, cache.clone());
+                            let fut = handle_reaction(
+                                &db,
+                                &lnurl_client,
+                                event,
+                                &keys,
+                                lnurl_cache.clone(),
+                                pay_cache.clone(),
+                            );
 
                             match tokio::time::timeout(Duration::from_secs(30), fut).await {
                                 Ok(Ok(_)) => {}
@@ -80,7 +91,8 @@ async fn handle_reaction(
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
-    cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
     tags.reverse();
@@ -132,7 +144,7 @@ async fn handle_reaction(
 
         let lnurl = {
             let cache_result = {
-                let cache = cache.lock().unwrap();
+                let cache = lnurl_cache.lock().unwrap();
                 cache.get(&p_tag).cloned()
             };
             match cache_result {
@@ -181,7 +193,7 @@ async fn handle_reaction(
                         Some(lnurl) => lnurl,
                     };
 
-                    let mut cache = cache.lock().unwrap();
+                    let mut cache = lnurl_cache.lock().unwrap();
                     cache.insert(p_tag, lnurl.clone());
 
                     lnurl
@@ -198,6 +210,7 @@ async fn handle_reaction(
             lnurl_client,
             user.amount_sats * 1_000,
             &nwc,
+            pay_cache.clone(),
         )
         .await?;
         // pay donations too
@@ -210,6 +223,7 @@ async fn handle_reaction(
                 lnurl_client,
                 donation.amount_sats * 1_000,
                 &nwc,
+                pay_cache.clone(),
             )
             .await?;
         }
@@ -227,33 +241,50 @@ async fn get_invoice_from_lnurl(
     lnurl: &LnUrl,
     lnurl_client: &AsyncClient,
     amount_msats: u64,
+    pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<Invoice> {
-    let resp = lnurl_client.make_request(&lnurl.url).await?;
-    let invoice = if let LnUrlPayResponse(pay) = resp {
-        let zap_request = match user_key {
-            Some(user_key) => {
-                let mut tags = vec![
-                    Tag::PubKey(user_key, None),
-                    Tag::Amount(amount_msats),
-                    Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
-                ];
-                if let Some(event_id) = event_id {
-                    tags.push(Tag::Event(event_id, None, None));
-                }
-                EventBuilder::new(Kind::ZapRequest, "", &tags)
-                    .to_event(keys)
-                    .ok()
-            }
-            None => None,
+    let pay = {
+        let cache_result = {
+            let cache = pay_cache.lock().unwrap();
+            cache.get(lnurl).cloned()
         };
-
-        lnurl_client
-            .get_invoice(&pay, amount_msats, zap_request)
-            .await?
-            .invoice()
-    } else {
-        return Err(anyhow::anyhow!("Invalid lnurl response"));
+        match cache_result {
+            Some(pay) => pay,
+            None => {
+                println!("No pay in cache, fetching...");
+                let resp = lnurl_client.make_request(&lnurl.url).await?;
+                if let LnUrlPayResponse(pay) = resp {
+                    let mut cache = pay_cache.lock().unwrap();
+                    cache.insert(lnurl.clone(), pay.clone());
+                    pay
+                } else {
+                    return Err(anyhow::anyhow!("Invalid lnurl response"));
+                }
+            }
+        }
     };
+
+    let zap_request = match user_key {
+        Some(user_key) => {
+            let mut tags = vec![
+                Tag::PubKey(user_key, None),
+                Tag::Amount(amount_msats),
+                Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
+            ];
+            if let Some(event_id) = event_id {
+                tags.push(Tag::Event(event_id, None, None));
+            }
+            EventBuilder::new(Kind::ZapRequest, "", &tags)
+                .to_event(keys)
+                .ok()
+        }
+        None => None,
+    };
+
+    let invoice = lnurl_client
+        .get_invoice(&pay, amount_msats, zap_request)
+        .await?
+        .invoice();
 
     if !invoice
         .amount_milli_satoshis()
@@ -265,6 +296,7 @@ async fn get_invoice_from_lnurl(
     Ok(invoice)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn pay_to_lnurl(
     keys: &Keys,
     user_key: Option<XOnlyPublicKey>,
@@ -273,19 +305,27 @@ async fn pay_to_lnurl(
     lnurl_client: &AsyncClient,
     amount_msats: u64,
     nwc: &NostrWalletConnectURI,
+    pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
-    let invoice =
-        match get_invoice_from_lnurl(keys, user_key, event_id, &lnurl, lnurl_client, amount_msats)
-            .await
-        {
-            Ok(invoice) => invoice,
-            Err(e) => {
-                return Err(anyhow!(
-                    "Error getting invoice from lnurl ({}): {e}",
-                    lnurl.url
-                ));
-            }
-        };
+    let invoice = match get_invoice_from_lnurl(
+        keys,
+        user_key,
+        event_id,
+        &lnurl,
+        lnurl_client,
+        amount_msats,
+        pay_cache,
+    )
+    .await
+    {
+        Ok(invoice) => invoice,
+        Err(e) => {
+            return Err(anyhow!(
+                "Error getting invoice from lnurl ({}): {e}",
+                lnurl.url
+            ));
+        }
+    };
 
     let event = create_nwc_request(nwc, invoice.to_string());
 

@@ -15,6 +15,7 @@ use sled::Db;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::watch::Receiver;
 
 pub async fn start_subscription(
@@ -57,11 +58,13 @@ pub async fn start_subscription(
                         let cache = cache.clone();
                         let keys = keys.clone();
                         async move {
-                            if let Err(e) =
-                                handle_reaction(&db, &lnurl_client, event, &keys, cache.clone())
-                                    .await
-                            {
-                                eprintln!("Error: {e}");
+                            let fut =
+                                handle_reaction(&db, &lnurl_client, event, &keys, cache.clone());
+
+                            match tokio::time::timeout(Duration::from_secs(30), fut).await {
+                                Ok(Ok(_)) => {}
+                                Ok(Err(e)) => eprintln!("Error: {e}"),
+                                Err(_) => eprintln!("Timeout"),
                             }
                         }
                     });

@@ -9,7 +9,7 @@ use lnurl::LnUrlResponse::LnUrlPayResponse;
 use lnurl::{AsyncClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
-use nostr::prelude::encrypt;
+use nostr::prelude::{encrypt, ToBech32};
 use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
@@ -209,6 +209,7 @@ async fn handle_reaction(
         // pay to lnurl
         pay_to_lnurl(
             keys,
+            event.pubkey,
             Some(p_tag),
             Some(event_id),
             lnurl,
@@ -222,6 +223,7 @@ async fn handle_reaction(
         for donation in user.donations() {
             pay_to_lnurl(
                 keys,
+                event.pubkey,
                 None,
                 None,
                 donation.lnurl,
@@ -243,8 +245,10 @@ async fn handle_reaction(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn get_invoice_from_lnurl(
     keys: &Keys,
+    from_user: XOnlyPublicKey,
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     lnurl: &LnUrl,
@@ -283,7 +287,8 @@ async fn get_invoice_from_lnurl(
             if let Some(event_id) = event_id {
                 tags.push(Tag::Event(event_id, None, None));
             }
-            EventBuilder::new(Kind::ZapRequest, "", &tags)
+            let content = format!("From: nostr:{}", from_user.to_bech32().unwrap());
+            EventBuilder::new(Kind::ZapRequest, content, &tags)
                 .to_event(keys)
                 .ok()
         }
@@ -308,6 +313,7 @@ async fn get_invoice_from_lnurl(
 #[allow(clippy::too_many_arguments)]
 async fn pay_to_lnurl(
     keys: &Keys,
+    from_user: XOnlyPublicKey,
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     lnurl: LnUrl,
@@ -318,6 +324,7 @@ async fn pay_to_lnurl(
 ) -> anyhow::Result<()> {
     let invoice = match get_invoice_from_lnurl(
         keys,
+        from_user,
         user_key,
         event_id,
         &lnurl,

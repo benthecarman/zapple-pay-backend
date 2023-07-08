@@ -107,14 +107,14 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
         Ok(config) => {
             crate::db::upsert_user(&state.db, npub, &emoji, config)?;
 
+            let npub_hex = npub.to_hex();
+            println!("New user: {}!", npub_hex);
             // notify new key
             let keys = state.pubkeys.lock().unwrap();
             keys.send_if_modified(|current| {
-                let npub_hex = npub.to_hex();
                 if current.contains(&npub_hex) {
                     false
                 } else {
-                    println!("New key: {}!", npub_hex);
                     current.push(npub_hex);
                     true
                 }

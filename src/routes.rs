@@ -114,6 +114,7 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
                 if current.contains(&npub_hex) {
                     false
                 } else {
+                    println!("New key: {}!", npub_hex);
                     current.push(npub_hex);
                     true
                 }

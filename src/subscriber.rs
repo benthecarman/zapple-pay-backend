@@ -147,7 +147,6 @@ async fn handle_reaction(
 
                     let mut lnurl: Option<LnUrl> = None;
                     let mut notifications = client.notifications();
-                    // todo time this out
                     while let Ok(notification) = notifications.recv().await {
                         if let RelayPoolNotification::Event(_url, event) = notification {
                             if event.pubkey == p_tag && event.kind == Kind::Metadata {

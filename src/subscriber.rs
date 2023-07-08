@@ -45,7 +45,7 @@ pub async fn start_subscription(
         let authors: Vec<String> = rx.borrow().clone();
 
         let subscription = Filter::new()
-            .kind(Kind::Reaction)
+            .kinds(vec![Kind::Reaction, Kind::TextNote])
             .authors(authors)
             .since(Timestamp::now());
 

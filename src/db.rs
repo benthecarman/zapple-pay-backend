@@ -1,4 +1,3 @@
-use bitcoin::hashes::hex::ToHex;
 use lnurl::lnurl::LnUrl;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
@@ -54,7 +53,7 @@ pub struct DonationConfig {
 }
 
 fn get_key(npub: XOnlyPublicKey, emoji: &str) -> String {
-    format!("{}:{}", npub.to_hex(), emoji)
+    format!("{}:{}", npub.to_string(), emoji)
 }
 
 pub fn upsert_user(
@@ -87,4 +86,28 @@ pub fn delete_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result
     let key = get_key(npub, emoji);
     db.remove(key.as_bytes())?;
     Ok(())
+}
+
+pub fn run_migration(db: &Db) -> anyhow::Result<usize> {
+    let mut count = 0;
+
+    for key in db.iter().keys() {
+        let key = key?;
+        let value = db.get(key.clone())?;
+
+        if let Some(value) = value {
+            let mut config = serde_json::from_slice::<UserConfig>(&value)?;
+            let emoji = config.emoji();
+            config.emoji = None;
+
+            if let Ok(npub) = XOnlyPublicKey::from_slice(key.as_ref()) {
+                upsert_user(db, npub, &emoji, config)?;
+
+                db.remove(npub.serialize())?;
+                count += 1;
+            }
+        }
+    }
+
+    Ok(count)
 }

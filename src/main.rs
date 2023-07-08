@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
 
     let db_path = {
         let mut path = path.clone();
-        path.push("users.db");
+        path.push("sled.db");
         path
     };
 
@@ -60,16 +60,20 @@ async fn main() -> anyhow::Result<()> {
     let mut start = vec![];
     db.scan_prefix("").for_each(|res| {
         res.map(|(k, _)| {
-            let str = String::from_utf8(k.to_vec()).unwrap();
-            // take first 64 chars
-            let pubkey_str = str.chars().take(64).collect::<String>();
+            if let Ok(str) = String::from_utf8(k.to_vec()) {
+                // take first 64 chars
+                let pubkey_str = str.chars().take(64).collect::<String>();
 
-            let xonly = XOnlyPublicKey::from_str(&pubkey_str)
-                .map_err(|e| {
-                    println!("Failed to parse pubkey ({pubkey_str}) from db: {e}");
-                })
-                .unwrap();
-            start.push(xonly.to_hex());
+                let xonly = XOnlyPublicKey::from_str(&pubkey_str)
+                    .map_err(|e| {
+                        println!("Failed to parse pubkey ({pubkey_str}) from db: {e}");
+                    })
+                    .ok();
+
+                if let Some(xonly) = xonly {
+                    start.push(xonly.to_hex());
+                }
+            }
         })
         .unwrap();
     });
@@ -93,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/set-user", post(set_user_config))
         .route("/delete-user/:npub/:emoji", get(delete_user_config))
         .route("/count", get(count))
+        .route("/migration", get(run_migration))
         // .route("/get-user/:npub", get(get_user_config))
         .fallback(fallback)
         .layer(Extension(state.clone()))

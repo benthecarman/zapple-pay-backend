@@ -211,3 +211,12 @@ pub async fn count(
 ) -> Result<Json<usize>, (StatusCode, String)> {
     Ok(Json(state.db.len()))
 }
+
+pub async fn run_migration(
+    Extension(state): Extension<State>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    match crate::db::run_migration(&state.db) {
+        Ok(count) => Ok(Json(count)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}

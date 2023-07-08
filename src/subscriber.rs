@@ -44,8 +44,10 @@ pub async fn start_subscription(
 
         let authors: Vec<String> = rx.borrow().clone();
 
+        let kinds = vec![Kind::Reaction, Kind::TextNote];
+
         let subscription = Filter::new()
-            .kinds(vec![Kind::Reaction, Kind::TextNote])
+            .kinds(kinds.clone())
             .authors(authors)
             .since(Timestamp::now());
 
@@ -56,7 +58,7 @@ pub async fn start_subscription(
         let mut notifications = client.notifications();
         while let Ok(notification) = notifications.recv().await {
             if let RelayPoolNotification::Event(_url, event) = notification {
-                if event.kind == Kind::Reaction && event.content.len() == 1 {
+                if kinds.contains(&event.kind) {
                     tokio::spawn({
                         let db = db.clone();
                         let lnurl_client = lnurl_client.clone();

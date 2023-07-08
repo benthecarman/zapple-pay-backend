@@ -5,7 +5,7 @@ use lightning_invoice::Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use lnurl::LnUrlResponse::LnUrlPayResponse;
-use lnurl::{BlockingClient, Builder};
+use lnurl::{AsyncClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::encrypt;
@@ -24,7 +24,7 @@ pub async fn start_subscription(
     rx: Receiver<Vec<String>>,
     keys: Keys,
 ) -> anyhow::Result<()> {
-    let lnurl_client = Builder::default().build_blocking()?;
+    let lnurl_client = Builder::default().build_async()?;
 
     let cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -77,7 +77,7 @@ pub async fn start_subscription(
 
 async fn handle_reaction(
     db: &Db,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
     cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
@@ -225,10 +225,10 @@ async fn get_invoice_from_lnurl(
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     lnurl: &LnUrl,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     amount_msats: u64,
 ) -> anyhow::Result<Invoice> {
-    let resp = lnurl_client.make_request(&lnurl.url)?;
+    let resp = lnurl_client.make_request(&lnurl.url).await?;
     let invoice = if let LnUrlPayResponse(pay) = resp {
         let zap_request = match user_key {
             Some(user_key) => {
@@ -248,7 +248,8 @@ async fn get_invoice_from_lnurl(
         };
 
         lnurl_client
-            .get_invoice(&pay, amount_msats, zap_request)?
+            .get_invoice(&pay, amount_msats, zap_request)
+            .await?
             .invoice()
     } else {
         return Err(anyhow::anyhow!("Invalid lnurl response"));
@@ -269,7 +270,7 @@ async fn pay_to_lnurl(
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     lnurl: LnUrl,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     amount_msats: u64,
     nwc: &NostrWalletConnectURI,
 ) -> anyhow::Result<()> {
@@ -279,7 +280,10 @@ async fn pay_to_lnurl(
         {
             Ok(invoice) => invoice,
             Err(e) => {
-                return Err(anyhow!("Error getting invoice from lnurl ({lnurl}: {e}"));
+                return Err(anyhow!(
+                    "Error getting invoice from lnurl ({}): {e}",
+                    lnurl.url
+                ));
             }
         };
 

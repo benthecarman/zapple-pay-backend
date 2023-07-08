@@ -81,10 +81,6 @@ async fn handle_reaction(
     keys: &Keys,
     cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
 ) -> anyhow::Result<()> {
-    println!(
-        "Received reaction: {} {} {}",
-        event.id, event.content, event.pubkey
-    );
     let mut tags = event.tags.clone();
     tags.reverse();
     let event_id = tags.into_iter().find_map(|tag| {
@@ -117,6 +113,11 @@ async fn handle_reaction(
         if user.emoji() != event.content {
             return Ok(());
         }
+
+        println!(
+            "Received reaction: {} {} {}",
+            event.id, event.content, event.pubkey
+        );
 
         let nwc = user.nwc();
 

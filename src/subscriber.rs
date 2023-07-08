@@ -105,9 +105,9 @@ async fn handle_reaction(
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
     tags.reverse();
-    let event_id = tags.into_iter().find_map(|tag| {
+    let event_id = tags.iter().find_map(|tag| {
         if let Tag::Event(id, _, _) = tag {
-            Some(id)
+            Some(*id)
         } else {
             None
         }
@@ -118,7 +118,7 @@ async fn handle_reaction(
         Some(e) => e,
     };
 
-    let p_tag = event.tags.into_iter().find_map(|tag| {
+    let p_tag = tags.into_iter().find_map(|tag| {
         if let Tag::PubKey(p, _) = tag {
             Some(p)
         } else {

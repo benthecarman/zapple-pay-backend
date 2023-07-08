@@ -22,7 +22,7 @@ use tokio::sync::watch::Receiver;
 
 pub async fn start_subscription(
     db: Db,
-    rx: Receiver<Vec<String>>,
+    mut rx: Receiver<Vec<String>>,
     keys: Keys,
 ) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_async()?;
@@ -56,32 +56,39 @@ pub async fn start_subscription(
         println!("Listening for nip 7 reactions...");
 
         let mut notifications = client.notifications();
-        while let Ok(notification) = notifications.recv().await {
-            if let RelayPoolNotification::Event(_url, event) = notification {
-                if kinds.contains(&event.kind) && event.content.chars().count() == 1 {
-                    tokio::spawn({
-                        let db = db.clone();
-                        let lnurl_client = lnurl_client.clone();
-                        let keys = keys.clone();
-                        let lnurl_cache = lnurl_cache.clone();
-                        let pay_cache = pay_cache.clone();
-                        async move {
-                            let fut = handle_reaction(
-                                &db,
-                                &lnurl_client,
-                                event,
-                                &keys,
-                                lnurl_cache.clone(),
-                                pay_cache.clone(),
-                            );
+        loop {
+            tokio::select! {
+                Ok(notification) = notifications.recv() => {
+                    if let RelayPoolNotification::Event(_url, event) = notification {
+                        if kinds.contains(&event.kind) && event.content.chars().count() == 1 {
+                            tokio::spawn({
+                                let db = db.clone();
+                                let lnurl_client = lnurl_client.clone();
+                                let keys = keys.clone();
+                                let lnurl_cache = lnurl_cache.clone();
+                                let pay_cache = pay_cache.clone();
+                                async move {
+                                    let fut = handle_reaction(
+                                        &db,
+                                        &lnurl_client,
+                                        event,
+                                        &keys,
+                                        lnurl_cache.clone(),
+                                        pay_cache.clone(),
+                                    );
 
-                            match tokio::time::timeout(Duration::from_secs(30), fut).await {
-                                Ok(Ok(_)) => {}
-                                Ok(Err(e)) => eprintln!("Error: {e}"),
-                                Err(_) => eprintln!("Timeout"),
-                            }
+                                    match tokio::time::timeout(Duration::from_secs(30), fut).await {
+                                        Ok(Ok(_)) => {}
+                                        Ok(Err(e)) => eprintln!("Error: {e}"),
+                                        Err(_) => eprintln!("Timeout"),
+                                    }
+                                }
+                            });
                         }
-                    });
+                    }
+                }
+                _ = rx.changed() => {
+                    break;
                 }
             }
         }

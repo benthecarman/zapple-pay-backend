@@ -17,7 +17,6 @@ impl UserConfig {
     pub fn new(
         amount_sats: u64,
         nwc: NostrWalletConnectURI,
-        emoji: Option<String>,
         donations: Vec<DonationConfig>,
     ) -> Self {
         let donations = if donations.is_empty() {
@@ -29,7 +28,7 @@ impl UserConfig {
         UserConfig {
             amount_sats,
             nwc: nwc.to_string(),
-            emoji,
+            emoji: None,
             donations,
         }
     }
@@ -53,15 +52,26 @@ pub struct DonationConfig {
     pub lnurl: LnUrl,
 }
 
-pub fn upsert_user(db: &Db, npub: XOnlyPublicKey, config: UserConfig) -> anyhow::Result<()> {
+fn get_key(npub: XOnlyPublicKey, emoji: &str) -> String {
+    format!("{}:{}", npub.to_string(), emoji)
+}
+
+pub fn upsert_user(
+    db: &Db,
+    npub: XOnlyPublicKey,
+    emoji: &str,
+    config: UserConfig,
+) -> anyhow::Result<()> {
+    let key = get_key(npub, emoji);
     let value = serde_json::to_vec(&config).unwrap();
-    db.insert(npub.serialize(), value)?;
+    db.insert(key.as_bytes(), value)?;
 
     Ok(())
 }
 
-pub fn get_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<Option<UserConfig>> {
-    let value = db.get(npub.serialize())?;
+pub fn get_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<Option<UserConfig>> {
+    let key = get_key(npub, emoji);
+    let value = db.get(key.as_bytes())?;
 
     match value {
         Some(value) => {
@@ -72,7 +82,32 @@ pub fn get_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<Option<UserConf
     }
 }
 
-pub fn delete_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<()> {
-    db.remove(npub.serialize())?;
+pub fn delete_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<()> {
+    let key = get_key(npub, emoji);
+    db.remove(key.as_bytes())?;
     Ok(())
+}
+
+pub fn run_migration(db: &Db) -> anyhow::Result<usize> {
+    let mut count = 0;
+
+    for key in db.iter().keys() {
+        let key = key?;
+        let value = db.get(key.clone())?;
+
+        if let Some(value) = value {
+            let mut config = serde_json::from_slice::<UserConfig>(&value)?;
+            let emoji = config.emoji();
+            config.emoji = None;
+
+            let npub = XOnlyPublicKey::from_slice(key.as_ref()).unwrap();
+
+            upsert_user(db, npub, &emoji, config)?;
+
+            db.remove(npub.serialize())?;
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }

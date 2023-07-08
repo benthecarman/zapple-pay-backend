@@ -56,7 +56,7 @@ pub async fn start_subscription(
         let mut notifications = client.notifications();
         while let Ok(notification) = notifications.recv().await {
             if let RelayPoolNotification::Event(_url, event) = notification {
-                if event.kind == Kind::Reaction {
+                if event.kind == Kind::Reaction && event.content.len() == 1 {
                     tokio::spawn({
                         let db = db.clone();
                         let lnurl_client = lnurl_client.clone();
@@ -122,11 +122,7 @@ async fn handle_reaction(
         Some(p) => p,
     };
 
-    if let Some(user) = get_user(db, event.pubkey)? {
-        if user.emoji() != event.content {
-            return Ok(());
-        }
-
+    if let Some(user) = get_user(db, event.pubkey, &event.content)? {
         println!(
             "Received reaction: {} {} {}",
             event.id, event.content, event.pubkey

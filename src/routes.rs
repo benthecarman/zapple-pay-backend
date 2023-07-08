@@ -30,6 +30,10 @@ impl SetUserConfig {
         self.donations.clone().unwrap_or_default()
     }
 
+    pub fn emoji(&self) -> String {
+        self.emoji.clone().unwrap_or("⚡".to_string())
+    }
+
     pub fn into_db(self) -> anyhow::Result<crate::db::UserConfig> {
         let donations = self
             .donations
@@ -76,7 +80,6 @@ impl SetUserConfig {
         Ok(crate::db::UserConfig::new(
             self.amount_sats,
             NostrWalletConnectURI::from_str(&nwc)?,
-            self.emoji,
             donations,
         ))
     }
@@ -99,9 +102,10 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
     }
 
     let npub = payload.npub;
+    let emoji = payload.emoji();
     match payload.into_db() {
         Ok(config) => {
-            crate::db::upsert_user(&state.db, npub, config)?;
+            crate::db::upsert_user(&state.db, npub, &emoji, config)?;
 
             // notify new key
             let keys = state.pubkeys.lock().unwrap();
@@ -134,9 +138,10 @@ pub async fn set_user_config(
 #[allow(dead_code)]
 pub(crate) fn get_user_config_impl(
     npub: XOnlyPublicKey,
+    emoji: String,
     db: &Db,
 ) -> anyhow::Result<Option<SetUserConfig>> {
-    crate::db::get_user(db, npub).map(|user| {
+    crate::db::get_user(db, npub, &emoji).map(|user| {
         user.map(|user| {
             let donations = user
                 .donations()
@@ -167,6 +172,7 @@ pub(crate) fn get_user_config_impl(
 #[allow(dead_code)]
 pub async fn get_user_config(
     Path(npub): Path<String>,
+    Path(emoji): Path<String>,
     Extension(state): Extension<State>,
 ) -> Result<Json<SetUserConfig>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
@@ -175,7 +181,7 @@ pub async fn get_user_config(
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
         )
     })?;
-    match get_user_config_impl(npub, &state.db) {
+    match get_user_config_impl(npub, emoji, &state.db) {
         Ok(Some(res)) => Ok(Json(res)),
         Ok(None) => Err((StatusCode::NOT_FOUND, String::from("{\"status\":\"ERROR\",\"reason\":\"The user you're searching for could not be found.\"}"))),
         Err(e) => Err(handle_anyhow_error(e)),
@@ -184,6 +190,7 @@ pub async fn get_user_config(
 
 pub async fn delete_user_config(
     Path(npub): Path<String>,
+    Path(emoji): Path<String>,
     Extension(state): Extension<State>,
 ) -> Result<Json<()>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
@@ -193,7 +200,7 @@ pub async fn delete_user_config(
         )
     })?;
 
-    match crate::db::delete_user(&state.db, npub) {
+    match crate::db::delete_user(&state.db, npub, &emoji) {
         Ok(_) => Ok(Json(())),
         Err(e) => Err(handle_anyhow_error(e)),
     }
@@ -203,4 +210,13 @@ pub async fn count(
     Extension(state): Extension<State>,
 ) -> Result<Json<usize>, (StatusCode, String)> {
     Ok(Json(state.db.len()))
+}
+
+pub async fn run_migration(
+    Extension(state): Extension<State>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    match crate::db::run_migration(&state.db) {
+        Ok(count) => Ok(Json(count)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
 }

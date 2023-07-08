@@ -233,7 +233,11 @@ async fn handle_reaction(
             .await?;
         }
     } else {
-        return Err(anyhow!("User not found"));
+        return Err(anyhow!(
+            "User not found: {} {}",
+            event.pubkey,
+            event.content
+        ));
     }
 
     Ok(())

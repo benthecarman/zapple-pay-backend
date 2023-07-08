@@ -11,9 +11,9 @@ use bitcoin::hashes::hex::ToHex;
 use clap::Parser;
 use nostr::key::{SecretKey, XOnlyPublicKey};
 use nostr::Keys;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{from_reader, to_string};
-use sled::{Db, Serialize};
+use sled::Db;
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tower_http::cors::{Any, CorsLayer};
@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
     let mut start = vec![];
     db.scan_prefix("").for_each(|res| {
         res.map(|(k, _)| {
-            let str = String::from_utf8(k.serialize()).unwrap();
+            let str = String::from_utf8(k.to_vec()).unwrap();
             // take first 64 chars
             let pubkey_str = str.chars().take(64).collect::<String>();
 
@@ -129,7 +129,7 @@ async fn fallback(uri: Uri) -> (StatusCode, String) {
     (StatusCode::NOT_FOUND, format!("No route for {}", uri))
 }
 
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct ZapplePayKeys {
     server_key: SecretKey,
 }

@@ -236,7 +236,7 @@ async fn handle_reaction(
         }
     } else {
         return Err(anyhow!(
-            "User not found: {} {}",
+            "Config not found: {} {}",
             event.pubkey,
             event.content
         ));

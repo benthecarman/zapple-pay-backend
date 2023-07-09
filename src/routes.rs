@@ -93,7 +93,10 @@ pub struct DonationConfig {
     pub lnurl: String,
 }
 
-pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> anyhow::Result<()> {
+pub(crate) fn set_user_config_impl(
+    payload: SetUserConfig,
+    state: &State,
+) -> anyhow::Result<Vec<SetUserConfig>> {
     let valid = payload
         .donations()
         .iter()
@@ -103,7 +106,7 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
         return Err(anyhow::anyhow!("Invalid lnurl"));
     }
 
-    let emoji = payload.emoji();
+    let emoji = payload.emoji().trim().to_string();
     if emoji.chars().count() != 1 {
         return Err(anyhow::anyhow!("Invalid emoji"));
     }
@@ -126,7 +129,7 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
                 }
             });
 
-            Ok(())
+            get_user_configs_impl(npub, &state.db)
         }
         Err(e) => Err(e),
     }
@@ -135,9 +138,9 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
 pub async fn set_user_config(
     Extension(state): Extension<State>,
     Json(payload): Json<SetUserConfig>,
-) -> Result<Json<()>, (StatusCode, String)> {
+) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
     match set_user_config_impl(payload, &state) {
-        Ok(_) => Ok(Json(())),
+        Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }
@@ -192,10 +195,61 @@ pub async fn get_user_config(
     }
 }
 
+pub(crate) fn get_user_configs_impl(
+    npub: XOnlyPublicKey,
+    db: &Db,
+) -> anyhow::Result<Vec<SetUserConfig>> {
+    crate::db::get_user_configs(db, npub).map(|configs| {
+        configs
+            .into_iter()
+            .map(|user| {
+                let donations = user
+                    .donations()
+                    .into_iter()
+                    .map(|donation| DonationConfig {
+                        amount_sats: donation.amount_sats,
+                        lnurl: donation.lnurl.to_string(),
+                    })
+                    .collect::<Vec<DonationConfig>>();
+
+                let donations = if donations.is_empty() {
+                    None
+                } else {
+                    Some(donations)
+                };
+
+                SetUserConfig {
+                    npub,
+                    amount_sats: user.amount_sats,
+                    nwc: "".to_string(), // don't return the nwc
+                    emoji: Some(user.emoji()),
+                    donations,
+                }
+            })
+            .collect()
+    })
+}
+
+pub async fn get_user_configs(
+    Path(npub): Path<String>,
+    Extension(state): Extension<State>,
+) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
+    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
+        )
+    })?;
+    match get_user_configs_impl(npub, &state.db) {
+        Ok(res) => Ok(Json(res)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
 pub async fn delete_user_config(
     Path((npub, emoji)): Path<(String, String)>,
     Extension(state): Extension<State>,
-) -> Result<Json<()>, (StatusCode, String)> {
+) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -204,7 +258,9 @@ pub async fn delete_user_config(
     })?;
 
     match crate::db::delete_user(&state.db, npub, &emoji) {
-        Ok(_) => Ok(Json(())),
+        Ok(_) => get_user_configs_impl(npub, &state.db)
+            .map(Json)
+            .map_err(handle_anyhow_error),
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }

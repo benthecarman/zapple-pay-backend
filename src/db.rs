@@ -82,6 +82,19 @@ pub fn get_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<Op
     }
 }
 
+pub fn get_user_configs(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<Vec<UserConfig>> {
+    let value = db.scan_prefix(npub.to_string().as_bytes());
+
+    let mut configs = vec![];
+    for result in value {
+        let (_, value) = result?;
+        let config = serde_json::from_slice(&value)?;
+        configs.push(config);
+    }
+
+    Ok(configs)
+}
+
 pub fn delete_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<()> {
     let key = get_key(npub, emoji);
     db.remove(key.as_bytes())?;

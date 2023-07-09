@@ -98,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/delete-user/:npub/:emoji", get(delete_user_config))
         .route("/count", get(count))
         .route("/get-user/:npub/:emoji", get(get_user_config))
+        .route("/get-user/:npub", get(get_user_configs))
         .fallback(fallback)
         .layer(Extension(state.clone()))
         .layer(

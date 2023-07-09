@@ -304,7 +304,10 @@ async fn get_invoice_from_lnurl(
         .amount_milli_satoshis()
         .is_some_and(|a| a == amount_msats)
     {
-        return Err(anyhow::anyhow!("Got invoice with invalid amount"));
+        return Err(anyhow::anyhow!(
+            "Got invoice with invalid amount expected: {amount_msats} msats got: {:?} msats",
+            invoice.amount_milli_satoshis()
+        ));
     }
 
     Ok(invoice)

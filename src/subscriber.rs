@@ -350,6 +350,7 @@ async fn pay_to_lnurl(
     client.add_relay(nwc.relay_url.clone(), None).await?;
     client.connect().await;
     client.send_event(event).await?;
+    client.disconnect().await?;
 
     println!("Sent event to {}", nwc.relay_url);
     Ok(())

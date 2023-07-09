@@ -102,6 +102,13 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
         return Err(anyhow::anyhow!("Invalid lnurl"));
     }
 
+    if payload
+        .emoji
+        .is_some_and(|emoji| emoji.chars().count() != 1)
+    {
+        return Err(anyhow::anyhow!("Invalid emoji"));
+    }
+
     let npub = payload.npub;
     let emoji = payload.emoji();
     match payload.into_db() {

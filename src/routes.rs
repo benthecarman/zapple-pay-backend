@@ -21,6 +21,7 @@ pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
 pub struct SetUserConfig {
     pub npub: XOnlyPublicKey,
     pub amount_sats: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
     nwc: String,
     pub emoji: Option<String>,
     donations: Option<Vec<DonationConfig>>,
@@ -102,15 +103,12 @@ pub(crate) fn set_user_config_impl(payload: SetUserConfig, state: &State) -> any
         return Err(anyhow::anyhow!("Invalid lnurl"));
     }
 
-    if payload
-        .emoji
-        .is_some_and(|emoji| emoji.chars().count() != 1)
-    {
+    let emoji = payload.emoji();
+    if emoji.chars().count() != 1 {
         return Err(anyhow::anyhow!("Invalid emoji"));
     }
 
     let npub = payload.npub;
-    let emoji = payload.emoji();
     match payload.into_db() {
         Ok(config) => {
             crate::db::upsert_user(&state.db, npub, &emoji, config)?;
@@ -144,7 +142,6 @@ pub async fn set_user_config(
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn get_user_config_impl(
     npub: XOnlyPublicKey,
     emoji: String,
@@ -170,7 +167,7 @@ pub(crate) fn get_user_config_impl(
             SetUserConfig {
                 npub,
                 amount_sats: user.amount_sats,
-                nwc: user.nwc().to_string(),
+                nwc: "".to_string(), // don't return the nwc
                 emoji: Some(user.emoji()),
                 donations,
             }
@@ -178,7 +175,6 @@ pub(crate) fn get_user_config_impl(
     })
 }
 
-#[allow(dead_code)]
 pub async fn get_user_config(
     Path(npub): Path<String>,
     Path(emoji): Path<String>,

@@ -13,6 +13,7 @@ use sled::Db;
 use std::str::FromStr;
 
 pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
+    eprintln!("Error: {:?}", err);
     (StatusCode::BAD_REQUEST, format!("{err}"))
 }
 

@@ -176,8 +176,7 @@ pub(crate) fn get_user_config_impl(
 }
 
 pub async fn get_user_config(
-    Path(npub): Path<String>,
-    Path(emoji): Path<String>,
+    Path((npub, emoji)): Path<(String, String)>,
     Extension(state): Extension<State>,
 ) -> Result<Json<SetUserConfig>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
@@ -194,8 +193,7 @@ pub async fn get_user_config(
 }
 
 pub async fn delete_user_config(
-    Path(npub): Path<String>,
-    Path(emoji): Path<String>,
+    Path((npub, emoji)): Path<(String, String)>,
     Extension(state): Extension<State>,
 ) -> Result<Json<()>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {

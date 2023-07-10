@@ -10,13 +10,14 @@ use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{encrypt, ToBech32};
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, RelayMessage, Tag, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
 use sled::Db;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
 
@@ -165,34 +166,48 @@ async fn handle_reaction(
                     let mut lnurl: Option<LnUrl> = None;
                     let mut notifications = client.notifications();
                     while let Ok(notification) = notifications.recv().await {
-                        if let RelayPoolNotification::Event(_url, event) = notification {
-                            if event.pubkey == p_tag && event.kind == Kind::Metadata {
-                                let json: Value = serde_json::from_str(&event.content)?;
-                                if let Value::Object(map) = json {
-                                    let lud06 = map
-                                        .get("lud06")
-                                        .and_then(|v| v.as_str())
-                                        .and_then(|s| LnUrl::from_str(s).ok());
-                                    // parse lnurl
-                                    if let Some(url) = lud06 {
-                                        lnurl = Some(url);
-                                        break;
+                        match notification {
+                            RelayPoolNotification::Event(_url, event) => {
+                                if event.pubkey == p_tag && event.kind == Kind::Metadata {
+                                    let json: Value = serde_json::from_str(&event.content)?;
+                                    if let Value::Object(map) = json {
+                                        let lud06 = map
+                                            .get("lud06")
+                                            .and_then(|v| v.as_str())
+                                            .and_then(|s| LnUrl::from_str(s).ok());
+                                        // parse lnurl
+                                        if let Some(url) = lud06 {
+                                            lnurl = Some(url);
+                                            break;
+                                        }
+                                        let lud16 = map
+                                            .get("lud16")
+                                            .and_then(|v| v.as_str())
+                                            .and_then(|s| LightningAddress::from_str(s).ok());
+                                        // try lightning address
+                                        if let Some(lnaddr) = lud16 {
+                                            lnurl = Some(lnaddr.lnurl());
+                                            break;
+                                        }
+                                        return Err(anyhow!(
+                                            "Profile has no lnurl or lightning address"
+                                        ));
                                     }
-                                    let lud16 = map
-                                        .get("lud16")
-                                        .and_then(|v| v.as_str())
-                                        .and_then(|s| LightningAddress::from_str(s).ok());
-                                    // try lightning address
-                                    if let Some(lnaddr) = lud16 {
-                                        lnurl = Some(lnaddr.lnurl());
-                                        break;
-                                    }
+                                }
+                            }
+                            RelayPoolNotification::Message(
+                                _,
+                                RelayMessage::EndOfStoredEvents(_),
+                            ) => {
+                                sleep(Duration::from_secs(2)).await;
+                                if let Some(_) = lnurl {
                                     return Err(anyhow!(
                                         "Profile has no lnurl or lightning address"
                                     ));
                                 }
                             }
-                        };
+                            _ => {}
+                        }
                     }
 
                     // handle None case

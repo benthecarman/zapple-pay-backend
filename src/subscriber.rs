@@ -187,6 +187,9 @@ async fn handle_reaction(
                                         lnurl = Some(lnaddr.lnurl());
                                         break;
                                     }
+                                    return Err(anyhow!(
+                                        "Profile has no lnurl or lightning address"
+                                    ));
                                 }
                             }
                         };

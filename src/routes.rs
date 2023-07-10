@@ -79,11 +79,10 @@ impl SetUserConfig {
             .nwc
             .replace("nostrwalletconnect", "nostr+walletconnect");
 
-        Ok(crate::db::UserConfig::new(
-            self.amount_sats,
-            NostrWalletConnectURI::from_str(&nwc)?,
-            donations,
-        ))
+        let nwc =
+            NostrWalletConnectURI::from_str(&nwc).map_err(|e| anyhow::anyhow!("{e}: {nwc}"))?;
+
+        Ok(crate::db::UserConfig::new(self.amount_sats, nwc, donations))
     }
 }
 

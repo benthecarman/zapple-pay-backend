@@ -6,7 +6,7 @@ use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::LnUrlResponse::LnUrlPayResponse;
-use lnurl::{AsyncClient, Builder};
+use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{encrypt, ToBech32};
@@ -25,7 +25,7 @@ pub async fn start_subscription(
     mut rx: Receiver<Vec<String>>,
     keys: Keys,
 ) -> anyhow::Result<()> {
-    let lnurl_client = Builder::default().build_async()?;
+    let lnurl_client = Builder::default().build_blocking()?;
 
     let lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -97,7 +97,7 @@ pub async fn start_subscription(
 
 async fn handle_reaction(
     db: &Db,
-    lnurl_client: &AsyncClient,
+    lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
@@ -252,7 +252,7 @@ async fn get_invoice_from_lnurl(
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     lnurl: &LnUrl,
-    lnurl_client: &AsyncClient,
+    lnurl_client: &BlockingClient,
     amount_msats: u64,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<Invoice> {
@@ -265,7 +265,7 @@ async fn get_invoice_from_lnurl(
             Some(pay) => pay,
             None => {
                 println!("No pay in cache, fetching...");
-                let resp = lnurl_client.make_request(&lnurl.url).await?;
+                let resp = lnurl_client.make_request(&lnurl.url)?;
                 if let LnUrlPayResponse(pay) = resp {
                     let mut cache = pay_cache.lock().unwrap();
                     cache.insert(lnurl.clone(), pay.clone());
@@ -296,8 +296,7 @@ async fn get_invoice_from_lnurl(
     };
 
     let invoice = lnurl_client
-        .get_invoice(&pay, amount_msats, zap_request)
-        .await?
+        .get_invoice(&pay, amount_msats, zap_request)?
         .invoice();
 
     if !invoice
@@ -320,7 +319,7 @@ async fn pay_to_lnurl(
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     lnurl: LnUrl,
-    lnurl_client: &AsyncClient,
+    lnurl_client: &BlockingClient,
     amount_msats: u64,
     nwc: &NostrWalletConnectURI,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,

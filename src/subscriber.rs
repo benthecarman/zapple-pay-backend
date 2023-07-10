@@ -216,8 +216,11 @@ async fn handle_reaction(
                         Some(lnurl) => lnurl,
                     };
 
-                    let mut cache = lnurl_cache.lock().unwrap();
-                    cache.insert(p_tag, lnurl.clone());
+                    // don't cache voltage lnurls, they change everytime
+                    if !lnurl.url.contains("vlt.ge") {
+                        let mut cache = lnurl_cache.lock().unwrap();
+                        cache.insert(p_tag, lnurl.clone());
+                    }
 
                     lnurl
                 }

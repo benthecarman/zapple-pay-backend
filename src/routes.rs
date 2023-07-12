@@ -106,9 +106,9 @@ pub(crate) fn set_user_config_impl(
     }
 
     let emoji_str = payload.emoji().trim().to_string();
-    if emoji::lookup_by_glyph::contains_glyph(&emoji_str) {
-        return Err(anyhow::anyhow!("Invalid emoji: {emoji_str}"));
-    }
+    // if emoji::lookup_by_glyph::contains_glyph(&emoji_str) {
+    //     return Err(anyhow::anyhow!("Invalid emoji: {emoji_str}"));
+    // }
 
     let npub = payload.npub;
     match payload.into_db() {

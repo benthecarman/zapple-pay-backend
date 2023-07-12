@@ -105,15 +105,15 @@ pub(crate) fn set_user_config_impl(
         return Err(anyhow::anyhow!("Invalid lnurl"));
     }
 
-    let emoji = payload.emoji().trim().to_string();
-    if emoji.chars().count() != 1 {
-        return Err(anyhow::anyhow!("Invalid emoji: {emoji}"));
+    let emoji_str = payload.emoji().trim().to_string();
+    if emoji::lookup_by_glyph::contains_glyph(&emoji_str) {
+        return Err(anyhow::anyhow!("Invalid emoji: {emoji_str}"));
     }
 
     let npub = payload.npub;
     match payload.into_db() {
         Ok(config) => {
-            crate::db::upsert_user(&state.db, npub, &emoji, config)?;
+            crate::db::upsert_user(&state.db, npub, &emoji_str, config)?;
 
             let npub_hex = npub.to_hex();
             println!("New user: {}!", npub_hex);

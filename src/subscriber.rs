@@ -216,11 +216,8 @@ async fn handle_reaction(
                         Some(lnurl) => lnurl,
                     };
 
-                    // don't cache voltage lnurls, they change everytime
-                    if !lnurl.url.contains("vlt.ge") {
-                        let mut cache = lnurl_cache.lock().unwrap();
-                        cache.insert(p_tag, lnurl.clone());
-                    }
+                    let mut cache = lnurl_cache.lock().unwrap();
+                    cache.insert(p_tag, lnurl.clone());
 
                     lnurl
                 }
@@ -288,8 +285,11 @@ async fn get_invoice_from_lnurl(
                 println!("No pay in cache, fetching...");
                 let resp = lnurl_client.make_request(&lnurl.url)?;
                 if let LnUrlPayResponse(pay) = resp {
-                    let mut cache = pay_cache.lock().unwrap();
-                    cache.insert(lnurl.clone(), pay.clone());
+                    // don't cache voltage lnurls, they change everytime
+                    if !lnurl.url.contains("vlt.ge") {
+                        let mut cache = pay_cache.lock().unwrap();
+                        cache.insert(lnurl.clone(), pay.clone());
+                    }
                     pay
                 } else {
                     return Err(anyhow::anyhow!("Invalid lnurl response"));

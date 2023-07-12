@@ -200,7 +200,7 @@ async fn handle_reaction(
                                 RelayMessage::EndOfStoredEvents(_),
                             ) => {
                                 sleep(Duration::from_secs(2));
-                                if lnurl.is_some() {
+                                if lnurl.is_none() {
                                     return Err(anyhow!(
                                         "Profile has no lnurl or lightning address"
                                     ));

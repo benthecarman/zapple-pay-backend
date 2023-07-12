@@ -303,6 +303,7 @@ async fn get_invoice_from_lnurl(
             let mut tags = vec![
                 Tag::PubKey(user_key, None),
                 Tag::Amount(amount_msats),
+                Tag::Lnurl(lnurl.to_string()),
                 Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
             ];
             if let Some(event_id) = event_id {

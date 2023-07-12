@@ -2089,6 +2089,7 @@ dependencies = [
  "axum",
  "bitcoin",
  "clap",
+ "futures",
  "lightning",
  "lightning-invoice",
  "lnurl-rs",

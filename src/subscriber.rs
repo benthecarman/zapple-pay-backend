@@ -238,8 +238,9 @@ async fn handle_reaction(
         )
         .await?;
         // pay donations too
+        let mut futs = vec![];
         for donation in user.donations() {
-            pay_to_lnurl(
+            futs.push(pay_to_lnurl(
                 keys,
                 event.pubkey,
                 None,
@@ -249,9 +250,9 @@ async fn handle_reaction(
                 donation.amount_sats * 1_000,
                 &nwc,
                 pay_cache.clone(),
-            )
-            .await?;
+            ));
         }
+        futures::future::join_all(futs).await;
     } else {
         return Err(anyhow!(
             "Config not found: {} {}",

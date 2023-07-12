@@ -107,7 +107,7 @@ pub(crate) fn set_user_config_impl(
 
     let emoji = payload.emoji().trim().to_string();
     if emoji.chars().count() != 1 {
-        return Err(anyhow::anyhow!("Invalid emoji"));
+        return Err(anyhow::anyhow!("Invalid emoji: {emoji}"));
     }
 
     let npub = payload.npub;

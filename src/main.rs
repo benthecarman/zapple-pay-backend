@@ -110,6 +110,15 @@ async fn main() -> anyhow::Result<()> {
 
     let server = axum::Server::bind(&addr).serve(server_router.into_make_service());
 
+    // restart nostr connections every hour
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(60 * 60)).await;
+            let tx = tx_shared.lock().unwrap();
+            tx.send_if_modified(|_| true);
+        }
+    });
+
     tokio::spawn(subscriber::start_subscription(
         state.db,
         rx,

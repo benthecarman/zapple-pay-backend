@@ -177,22 +177,23 @@ async fn handle_reaction(
                         if event.pubkey == p_tag && event.kind == Kind::Metadata {
                             let json: Value = serde_json::from_str(&event.content)?;
                             if let Value::Object(map) = json {
-                                let lud06 = map
-                                    .get("lud06")
-                                    .and_then(|v| v.as_str())
-                                    .and_then(|s| LnUrl::from_str(s).ok());
-                                // parse lnurl
-                                if let Some(url) = lud06 {
-                                    lnurl = Some(url);
-                                    break;
-                                }
+                                // try parse lightning address
                                 let lud16 = map
                                     .get("lud16")
                                     .and_then(|v| v.as_str())
                                     .and_then(|s| LightningAddress::from_str(s).ok());
-                                // try lightning address
                                 if let Some(lnaddr) = lud16 {
                                     lnurl = Some(lnaddr.lnurl());
+                                    break;
+                                }
+
+                                // try parse lnurl pay
+                                let lud06 = map
+                                    .get("lud06")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| LnUrl::from_str(s).ok());
+                                if let Some(url) = lud06 {
+                                    lnurl = Some(url);
                                     break;
                                 }
                                 return Err(anyhow!("Profile has no lnurl or lightning address"));

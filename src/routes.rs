@@ -96,10 +96,12 @@ pub(crate) fn set_user_config_impl(
     payload: SetUserConfig,
     state: &State,
 ) -> anyhow::Result<Vec<SetUserConfig>> {
-    let valid = payload
-        .donations()
-        .iter()
-        .all(|donation| LnUrl::from_str(&donation.lnurl).is_ok());
+    let valid = payload.donations().iter().all(|donation| {
+        {
+            LnUrl::from_str(&donation.lnurl).is_ok()
+                || LightningAddress::from_str(&donation.lnurl).is_ok()
+        }
+    });
 
     if !valid {
         return Err(anyhow::anyhow!("Invalid lnurl"));

@@ -100,6 +100,8 @@ pub async fn start_subscription(
                 }
             }
         }
+
+        client.disconnect().await?;
     }
 }
 
@@ -147,14 +149,6 @@ async fn handle_reaction(
 
         let nwc = user.nwc();
 
-        let client = Client::new(&Keys::generate());
-
-        client.add_relay("wss://nostr.wine", None).await?;
-        client.add_relay("wss://nos.lol", None).await?;
-        client.add_relay("wss://nostr.fmt.wiz.biz", None).await?;
-        client.add_relay("wss://relay.damus.io", None).await?;
-        client.connect().await;
-
         let lnurl = {
             let cache_result = {
                 let cache = lnurl_cache.lock().unwrap();
@@ -164,6 +158,15 @@ async fn handle_reaction(
                 Some(lnurl) => lnurl,
                 None => {
                     println!("No lnurl in cache, fetching...");
+
+                    let client = Client::new(&Keys::generate());
+
+                    client.add_relay("wss://nostr.wine", None).await?;
+                    client.add_relay("wss://nos.lol", None).await?;
+                    client.add_relay("wss://nostr.fmt.wiz.biz", None).await?;
+                    client.add_relay("wss://relay.damus.io", None).await?;
+                    client.connect().await;
+
                     let metadata_filter = Filter::new()
                         .kind(Kind::Metadata)
                         .author(p_tag.to_hex())
@@ -216,6 +219,7 @@ async fn handle_reaction(
                             _ => {}
                         }
                     }
+                    client.disconnect().await?;
 
                     // handle None case
                     let lnurl: LnUrl = match lnurl {

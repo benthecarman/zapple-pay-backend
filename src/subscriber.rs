@@ -374,7 +374,7 @@ async fn pay_to_lnurl(
 
     let keys = Keys::new(nwc.secret);
     let client = Client::new(&keys);
-    client.add_relay(nwc.relay_url.clone(), None).await?;
+    client.add_relay(nwc.relay_url.to_string(), None).await?;
     client.connect().await;
     client.send_event(event).await?;
     client.disconnect().await?;

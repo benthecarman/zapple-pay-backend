@@ -10,14 +10,13 @@ use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{encrypt, ToBech32};
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, RelayMessage, Tag, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
 use sled::Db;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
 
@@ -65,6 +64,7 @@ pub async fn start_subscription(
                             if kinds.contains(&event.kind) && event.content.chars().count() == 1 {
                                 tokio::spawn({
                                     let db = db.clone();
+                                    let client = client.clone();
                                     let lnurl_client = lnurl_client.clone();
                                     let keys = keys.clone();
                                     let lnurl_cache = lnurl_cache.clone();
@@ -72,6 +72,7 @@ pub async fn start_subscription(
                                     async move {
                                         let fut = handle_reaction(
                                             &db,
+                                            &client,
                                             &lnurl_client,
                                             event,
                                             &keys,
@@ -107,6 +108,7 @@ pub async fn start_subscription(
 
 async fn handle_reaction(
     db: &Db,
+    client: &Client,
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
@@ -159,67 +161,44 @@ async fn handle_reaction(
                 None => {
                     println!("No lnurl in cache, fetching...");
 
-                    let client = Client::new(&Keys::generate());
-
-                    client.add_relay("wss://nostr.wine", None).await?;
-                    client.add_relay("wss://nos.lol", None).await?;
-                    client.add_relay("wss://nostr.fmt.wiz.biz", None).await?;
-                    client.add_relay("wss://relay.damus.io", None).await?;
-                    client.connect().await;
-
                     let metadata_filter = Filter::new()
                         .kind(Kind::Metadata)
                         .author(p_tag.to_hex())
                         .limit(1);
-                    client.subscribe(vec![metadata_filter]).await;
+
+                    let timeout = Duration::from_secs(20);
+                    let events = client
+                        .get_events_of(vec![metadata_filter], Some(timeout))
+                        .await?;
 
                     let mut lnurl: Option<LnUrl> = None;
-                    let mut notifications = client.notifications();
-                    while let Ok(notification) = notifications.recv().await {
-                        match notification {
-                            RelayPoolNotification::Event(_url, event) => {
-                                if event.pubkey == p_tag && event.kind == Kind::Metadata {
-                                    let json: Value = serde_json::from_str(&event.content)?;
-                                    if let Value::Object(map) = json {
-                                        let lud06 = map
-                                            .get("lud06")
-                                            .and_then(|v| v.as_str())
-                                            .and_then(|s| LnUrl::from_str(s).ok());
-                                        // parse lnurl
-                                        if let Some(url) = lud06 {
-                                            lnurl = Some(url);
-                                            break;
-                                        }
-                                        let lud16 = map
-                                            .get("lud16")
-                                            .and_then(|v| v.as_str())
-                                            .and_then(|s| LightningAddress::from_str(s).ok());
-                                        // try lightning address
-                                        if let Some(lnaddr) = lud16 {
-                                            lnurl = Some(lnaddr.lnurl());
-                                            break;
-                                        }
-                                        return Err(anyhow!(
-                                            "Profile has no lnurl or lightning address"
-                                        ));
-                                    }
+
+                    for event in events {
+                        if event.pubkey == p_tag && event.kind == Kind::Metadata {
+                            let json: Value = serde_json::from_str(&event.content)?;
+                            if let Value::Object(map) = json {
+                                let lud06 = map
+                                    .get("lud06")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| LnUrl::from_str(s).ok());
+                                // parse lnurl
+                                if let Some(url) = lud06 {
+                                    lnurl = Some(url);
+                                    break;
                                 }
-                            }
-                            RelayPoolNotification::Message(
-                                _,
-                                RelayMessage::EndOfStoredEvents(_),
-                            ) => {
-                                sleep(Duration::from_secs(2));
-                                if lnurl.is_none() {
-                                    return Err(anyhow!(
-                                        "Profile has no lnurl or lightning address"
-                                    ));
+                                let lud16 = map
+                                    .get("lud16")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| LightningAddress::from_str(s).ok());
+                                // try lightning address
+                                if let Some(lnaddr) = lud16 {
+                                    lnurl = Some(lnaddr.lnurl());
+                                    break;
                                 }
+                                return Err(anyhow!("Profile has no lnurl or lightning address"));
                             }
-                            _ => {}
                         }
                     }
-                    client.disconnect().await?;
 
                     // handle None case
                     let lnurl: LnUrl = match lnurl {

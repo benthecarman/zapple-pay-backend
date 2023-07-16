@@ -1,3 +1,4 @@
+use crate::utils::valid_emoji_string;
 use crate::State;
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -17,7 +18,7 @@ pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, format!("{err}"))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SetUserConfig {
     pub npub: XOnlyPublicKey,
     pub amount_sats: u64,
@@ -86,7 +87,7 @@ impl SetUserConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DonationConfig {
     pub amount_sats: u64,
     pub lnurl: String,
@@ -108,6 +109,9 @@ pub(crate) fn set_user_config_impl(
     }
 
     let emoji_str = payload.emoji().trim().to_string();
+    if !valid_emoji_string(&emoji_str) {
+        return Err(anyhow::anyhow!("Invalid emoji: {emoji_str}"));
+    }
     // if emoji::lookup_by_glyph::contains_glyph(&emoji_str) {
     //     return Err(anyhow::anyhow!("Invalid emoji: {emoji_str}"));
     // }
@@ -270,4 +274,94 @@ pub async fn count(
     Extension(state): Extension<State>,
 ) -> Result<Json<usize>, (StatusCode, String)> {
     Ok(Json(state.db.len()))
+}
+
+#[cfg(test)]
+mod test {
+    use crate::routes::*;
+    use crate::State;
+    use bitcoin::hashes::hex::ToHex;
+    use bitcoin::secp256k1::rand;
+    use bitcoin::secp256k1::rand::Rng;
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::watch;
+
+    const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
+    const NWC: &str = "nostr+walletconnect://246be70a7e4966f138e9e48401f33c32a1c428bbfb7aab42e3946beb8bc15e7c?relay=wss%3A%2F%2Fnostr.mutinywallet.com%2F&secret=23ea701003500d852ba2756460099217f839e1fbc9665e493b56bd2d5912e31b";
+
+    fn gen_tmp_db_name() -> String {
+        let rng = rand::thread_rng();
+        let rand_string: String = rng
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(30)
+            .collect::<Vec<u8>>()
+            .to_hex();
+        format!("/tmp/zapple_pay_{}.sled", rand_string)
+    }
+
+    fn init_state(db_name: &str) -> State {
+        let db = sled::open(db_name).unwrap();
+
+        let (tx, _) = watch::channel(vec![]);
+        let pubkeys = Arc::new(Mutex::new(tx));
+
+        State { db, pubkeys }
+    }
+
+    fn teardown_database(db_name: &str) {
+        std::fs::remove_dir_all(db_name).unwrap();
+    }
+
+    #[test]
+    fn test_create_config() {
+        let db_name = gen_tmp_db_name();
+        let state = init_state(&db_name);
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+
+        let payload = SetUserConfig {
+            npub,
+            amount_sats: 21,
+            nwc: NWC.to_string(),
+            emoji: None,
+            donations: None,
+        };
+
+        let current = set_user_config_impl(payload, &state).unwrap();
+
+        let configs = get_user_configs_impl(npub, &state.db).unwrap();
+
+        assert_eq!(current, configs);
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].npub, npub);
+        assert_eq!(configs[0].amount_sats, 21);
+        assert_eq!(configs[0].emoji(), "⚡");
+        assert!(configs[0].donations.is_none());
+
+        teardown_database(&db_name);
+    }
+
+    #[test]
+    fn test_create_config_emojis() {
+        let db_name = gen_tmp_db_name();
+        let state = init_state(&db_name);
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+
+        let emojis = ["⚡️", "🤙", "👍", "❤️", "🫂"];
+
+        for emoji in emojis {
+            let payload = SetUserConfig {
+                npub,
+                amount_sats: 21,
+                nwc: NWC.to_string(),
+                emoji: Some(emoji.to_string()),
+                donations: None,
+            };
+
+            set_user_config_impl(payload, &state).unwrap();
+        }
+
+        teardown_database(&db_name);
+    }
 }

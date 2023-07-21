@@ -173,28 +173,25 @@ async fn handle_live_chat(
     });
 
     // if no p tag we are zapping the streamer, need to get pubkey from a tag
-    let user_key = match p_tag {
-        Some(p) => p,
+    let (user_key, a_tag) = match p_tag {
+        Some(p) => (p, None),
         None => {
-            let a_tag = tags.into_iter().find_map(|tag| {
-                if tag.kind() == TagKind::A {
-                    let tag = tag.as_vec();
-                    let kpi: Vec<&str> = tag[1].split(':').collect();
-                    let kind = Kind::from_str(kpi[0]).ok();
-                    let pk = XOnlyPublicKey::from_str(kpi[1]).ok();
+            let a_tag = tags.into_iter().find(|t| t.kind() == TagKind::A);
+            let user_key = a_tag.clone().and_then(|tag| {
+                let tag = tag.as_vec();
+                let kpi: Vec<&str> = tag[1].split(':').collect();
+                let kind = Kind::from_str(kpi[0]).ok();
+                let pk = XOnlyPublicKey::from_str(kpi[1]).ok();
 
-                    if kind.is_some_and(|k| k.as_u64() == 30311) {
-                        pk
-                    } else {
-                        None
-                    }
+                if kind.is_some_and(|k| k.as_u64() == 30311) {
+                    pk
                 } else {
                     None
                 }
             });
 
-            match a_tag {
-                Some(a) => a,
+            match user_key {
+                Some(pk) => (pk, a_tag),
                 None => return Err(anyhow!("No a tag found")),
             }
         }
@@ -203,6 +200,7 @@ async fn handle_live_chat(
     pay_user(
         user_key,
         event_id,
+        a_tag,
         db,
         client,
         lnurl_client,
@@ -254,6 +252,7 @@ async fn handle_reaction(
     pay_user(
         p_tag,
         Some(event_id),
+        None,
         db,
         client,
         lnurl_client,
@@ -268,6 +267,7 @@ async fn handle_reaction(
 async fn pay_user(
     user_key: XOnlyPublicKey,
     event_id: Option<EventId>,
+    a_tag: Option<Tag>,
     db: &Db,
     client: &Client,
     lnurl_client: &BlockingClient,
@@ -354,6 +354,7 @@ async fn pay_user(
             event.pubkey,
             Some(user_key),
             event_id,
+            a_tag,
             lnurl,
             lnurl_client,
             user.amount_sats * 1_000,
@@ -367,6 +368,7 @@ async fn pay_user(
             futs.push(pay_to_lnurl(
                 keys,
                 event.pubkey,
+                None,
                 None,
                 None,
                 donation.lnurl,
@@ -394,6 +396,7 @@ async fn get_invoice_from_lnurl(
     from_user: XOnlyPublicKey,
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
+    a_tag: Option<Tag>,
     lnurl: &LnUrl,
     lnurl_client: &BlockingClient,
     amount_msats: u64,
@@ -433,6 +436,9 @@ async fn get_invoice_from_lnurl(
             ];
             if let Some(event_id) = event_id {
                 tags.push(Tag::Event(event_id, None, None));
+            }
+            if let Some(a_tag) = a_tag {
+                tags.push(a_tag);
             }
             let content = format!("From: nostr:{}", from_user.to_bech32().unwrap());
             EventBuilder::new(Kind::ZapRequest, content, &tags)
@@ -477,6 +483,7 @@ async fn pay_to_lnurl(
     from_user: XOnlyPublicKey,
     user_key: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
+    a_tag: Option<Tag>,
     lnurl: LnUrl,
     lnurl_client: &BlockingClient,
     amount_msats: u64,
@@ -488,6 +495,7 @@ async fn pay_to_lnurl(
         from_user,
         user_key,
         event_id,
+        a_tag,
         &lnurl,
         lnurl_client,
         amount_msats,

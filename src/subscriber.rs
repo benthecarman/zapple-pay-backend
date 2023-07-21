@@ -45,7 +45,7 @@ pub async fn start_subscription(
 
         let authors: Vec<String> = rx.borrow().clone();
 
-        let kinds = vec![Kind::Reaction, Kind::TextNote];
+        let kinds = vec![Kind::Reaction, Kind::TextNote, Kind::Custom(1311)];
 
         let subscription = Filter::new()
             .kinds(kinds.clone())
@@ -62,7 +62,7 @@ pub async fn start_subscription(
                 Ok(notification) = notifications.recv() => {
                     match notification {
                         RelayPoolNotification::Event(_url, event) => {
-                            if kinds.contains(&event.kind) && valid_emoji_string(&event.content) {
+                            if valid_emoji_string(&event.content) {
                                 tokio::spawn({
                                     let db = db.clone();
                                     let client = client.clone();
@@ -71,7 +71,7 @@ pub async fn start_subscription(
                                     let lnurl_cache = lnurl_cache.clone();
                                     let pay_cache = pay_cache.clone();
                                     async move {
-                                        let fut = handle_reaction(
+                                        let fut = handle_event(
                                             &db,
                                             &client,
                                             &lnurl_client,
@@ -105,6 +105,111 @@ pub async fn start_subscription(
 
         client.disconnect().await?;
     }
+}
+
+async fn handle_event(
+    db: &Db,
+    client: &Client,
+    lnurl_client: &BlockingClient,
+    event: Event,
+    keys: &Keys,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
+) -> anyhow::Result<()> {
+    match event.kind {
+        Kind::TextNote | Kind::Reaction => {
+            handle_reaction(
+                db,
+                client,
+                lnurl_client,
+                event,
+                keys,
+                lnurl_cache,
+                pay_cache,
+            )
+            .await
+        }
+        Kind::Custom(1311) => {
+            handle_live_chat(
+                db,
+                client,
+                lnurl_client,
+                event,
+                keys,
+                lnurl_cache,
+                pay_cache,
+            )
+            .await
+        }
+        kind => Err(anyhow!("Invalid event kind, got: {kind:?}")),
+    }
+}
+
+async fn handle_live_chat(
+    db: &Db,
+    client: &Client,
+    lnurl_client: &BlockingClient,
+    event: Event,
+    keys: &Keys,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
+) -> anyhow::Result<()> {
+    let mut tags = event.tags.clone();
+    tags.reverse();
+    let event_id = tags.iter().find_map(|tag| {
+        if let Tag::Event(id, _, _) = tag {
+            Some(*id)
+        } else {
+            None
+        }
+    });
+
+    let p_tag = tags.iter().find_map(|tag| {
+        if let Tag::PubKey(p, _) = tag {
+            Some(p.to_owned())
+        } else {
+            None
+        }
+    });
+
+    // if no p tag we are zapping the streamer, need to get pubkey from a tag
+    let user_key = match p_tag {
+        Some(p) => p,
+        None => {
+            let a_tag = tags.into_iter().find_map(|tag| {
+                if let Tag::A {
+                    kind, public_key, ..
+                } = tag
+                {
+                    if kind == Kind::Custom(34550) {
+                        Some(public_key)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+
+            match a_tag {
+                Some(a) => a,
+                None => return Err(anyhow!("No a tag found")),
+            }
+        }
+    };
+
+    pay_user(
+        user_key,
+        event_id,
+        db,
+        client,
+        lnurl_client,
+        event,
+        keys,
+        lnurl_cache,
+        pay_cache,
+    )
+    .await
 }
 
 async fn handle_reaction(
@@ -144,6 +249,31 @@ async fn handle_reaction(
         Some(p) => p,
     };
 
+    pay_user(
+        p_tag,
+        Some(event_id),
+        db,
+        client,
+        lnurl_client,
+        event,
+        keys,
+        lnurl_cache,
+        pay_cache,
+    )
+    .await
+}
+
+async fn pay_user(
+    user_key: XOnlyPublicKey,
+    event_id: Option<EventId>,
+    db: &Db,
+    client: &Client,
+    lnurl_client: &BlockingClient,
+    event: Event,
+    keys: &Keys,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
+) -> anyhow::Result<()> {
     if let Some(user) = get_user(db, event.pubkey, &event.content)? {
         println!(
             "Received reaction: {} {} {}",
@@ -155,7 +285,7 @@ async fn handle_reaction(
         let lnurl = {
             let cache_result = {
                 let cache = lnurl_cache.lock().unwrap();
-                cache.get(&p_tag).cloned()
+                cache.get(&user_key).cloned()
             };
             match cache_result {
                 Some(lnurl) => lnurl,
@@ -164,7 +294,7 @@ async fn handle_reaction(
 
                     let metadata_filter = Filter::new()
                         .kind(Kind::Metadata)
-                        .author(p_tag.to_hex())
+                        .author(user_key.to_hex())
                         .limit(1);
 
                     let timeout = Duration::from_secs(20);
@@ -175,7 +305,7 @@ async fn handle_reaction(
                     let mut lnurl: Option<LnUrl> = None;
 
                     for event in events {
-                        if event.pubkey == p_tag && event.kind == Kind::Metadata {
+                        if event.pubkey == user_key && event.kind == Kind::Metadata {
                             let json: Value = serde_json::from_str(&event.content)?;
                             if let Value::Object(map) = json {
                                 // try parse lightning address
@@ -209,7 +339,7 @@ async fn handle_reaction(
                     };
 
                     let mut cache = lnurl_cache.lock().unwrap();
-                    cache.insert(p_tag, lnurl.clone());
+                    cache.insert(user_key, lnurl.clone());
 
                     lnurl
                 }
@@ -220,8 +350,8 @@ async fn handle_reaction(
         pay_to_lnurl(
             keys,
             event.pubkey,
-            Some(p_tag),
-            Some(event_id),
+            Some(user_key),
+            event_id,
             lnurl,
             lnurl_client,
             user.amount_sats * 1_000,

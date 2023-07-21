@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;

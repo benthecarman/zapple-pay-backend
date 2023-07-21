@@ -152,7 +152,7 @@ pub(crate) fn get_user_config_impl(
     emoji: String,
     db: &Db,
 ) -> anyhow::Result<Option<SetUserConfig>> {
-    crate::db::get_user(db, npub, &emoji).map(|user| {
+    crate::db::get_user(db, npub, &emoji, true).map(|user| {
         user.map(|user| {
             let donations = user
                 .donations()

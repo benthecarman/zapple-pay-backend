@@ -69,7 +69,12 @@ pub fn upsert_user(
     Ok(())
 }
 
-pub fn get_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<Option<UserConfig>> {
+pub fn get_user(
+    db: &Db,
+    npub: XOnlyPublicKey,
+    emoji: &str,
+    retry: bool,
+) -> anyhow::Result<Option<UserConfig>> {
     let key = get_key(npub, emoji);
     let value = db.get(key.as_bytes())?;
 
@@ -78,7 +83,23 @@ pub fn get_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<Op
             let config = serde_json::from_slice(&value)?;
             Ok(Some(config))
         }
-        None => Ok(None),
+        None => match emoji {
+            "⚡️" => {
+                if retry {
+                    get_user(db, npub, "⚡", false)
+                } else {
+                    Ok(None)
+                }
+            }
+            "⚡" => {
+                if retry {
+                    get_user(db, npub, "⚡️", false)
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Ok(None),
+        },
     }
 }
 

@@ -11,7 +11,7 @@ use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{encrypt, ToBech32};
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
 use sled::Db;
@@ -45,7 +45,7 @@ pub async fn start_subscription(
 
         let authors: Vec<String> = rx.borrow().clone();
 
-        let kinds = vec![Kind::Reaction, Kind::TextNote, Kind::Custom(1311)];
+        let kinds = vec![Kind::Reaction, Kind::TextNote, Kind::Regular(1311)];
 
         let subscription = Filter::new()
             .kinds(kinds.clone())
@@ -129,7 +129,7 @@ async fn handle_event(
             )
             .await
         }
-        Kind::Custom(1311) => {
+        Kind::Regular(1311) => {
             handle_live_chat(
                 db,
                 client,
@@ -177,12 +177,14 @@ async fn handle_live_chat(
         Some(p) => p,
         None => {
             let a_tag = tags.into_iter().find_map(|tag| {
-                if let Tag::A {
-                    kind, public_key, ..
-                } = tag
-                {
-                    if kind == Kind::Custom(34550) {
-                        Some(public_key)
+                if tag.kind() == TagKind::A {
+                    let tag = tag.as_vec();
+                    let kpi: Vec<&str> = tag[1].split(':').collect();
+                    let kind = Kind::from_str(kpi[0]).ok();
+                    let pk = XOnlyPublicKey::from_str(kpi[1]).ok();
+
+                    if kind.is_some_and(|k| k.as_u64() == 30311) {
+                        pk
                     } else {
                         None
                     }

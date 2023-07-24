@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
     let server_router = Router::new()
         .route("/set-user", post(set_user_config))
         .route("/delete-user/:npub/:emoji", get(delete_user_config))
+        .route("/delete-user/:npub", get(delete_user_configs))
         .route("/count", get(count))
         .route("/get-user/:npub/:emoji", get(get_user_config))
         .route("/get-user/:npub", get(get_user_configs))

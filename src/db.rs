@@ -116,8 +116,19 @@ pub fn get_user_configs(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<Vec<Use
     Ok(configs)
 }
 
-pub fn delete_user(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<()> {
+pub fn delete_user_config(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<()> {
     let key = get_key(npub, emoji);
     db.remove(key.as_bytes())?;
+    Ok(())
+}
+
+pub fn delete_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<()> {
+    let value = db.scan_prefix(npub.to_string().as_bytes());
+
+    for result in value {
+        let (key, _) = result?;
+        db.remove(key)?;
+    }
+
     Ok(())
 }

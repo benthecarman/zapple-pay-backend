@@ -259,7 +259,26 @@ pub async fn delete_user_config(
         )
     })?;
 
-    match crate::db::delete_user(&state.db, npub, &emoji) {
+    match crate::db::delete_user_config(&state.db, npub, &emoji) {
+        Ok(_) => get_user_configs_impl(npub, &state.db)
+            .map(Json)
+            .map_err(handle_anyhow_error),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
+pub async fn delete_user_configs(
+    Path(npub): Path<String>,
+    Extension(state): Extension<State>,
+) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
+    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
+        )
+    })?;
+
+    match crate::db::delete_user(&state.db, npub) {
         Ok(_) => get_user_configs_impl(npub, &state.db)
             .map(Json)
             .map_err(handle_anyhow_error),

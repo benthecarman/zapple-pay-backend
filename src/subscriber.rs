@@ -1,5 +1,4 @@
 use crate::db::get_user;
-use crate::utils::valid_emoji_string;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
 use lightning_invoice::Invoice;
@@ -62,7 +61,6 @@ pub async fn start_subscription(
                 Ok(notification) = notifications.recv() => {
                     match notification {
                         RelayPoolNotification::Event(_url, event) => {
-                            if valid_emoji_string(&event.content) {
                                 tokio::spawn({
                                     let db = db.clone();
                                     let client = client.clone();
@@ -88,7 +86,6 @@ pub async fn start_subscription(
                                         }
                                     }
                                 });
-                            }
                         }
                         RelayPoolNotification::Shutdown => {
                             println!("Relay pool shutdown");

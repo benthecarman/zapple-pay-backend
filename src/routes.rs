@@ -1,4 +1,3 @@
-use crate::utils::valid_emoji_string;
 use crate::State;
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -107,9 +106,6 @@ pub(crate) fn set_user_config_impl(
     }
 
     let emoji_str = payload.emoji().trim().to_string();
-    if !valid_emoji_string(&emoji_str) {
-        return Err(anyhow::anyhow!("Invalid emoji: {emoji_str}"));
-    }
 
     let npub = payload.npub;
     match payload.into_db() {

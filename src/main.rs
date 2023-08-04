@@ -27,7 +27,6 @@ mod config;
 mod db;
 mod routes;
 mod subscriber;
-mod utils;
 
 #[derive(Clone)]
 pub struct State {

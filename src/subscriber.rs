@@ -138,6 +138,7 @@ async fn handle_event(
             )
             .await
         }
+        Kind::Metadata => Ok(()),
         kind => Err(anyhow!("Invalid event kind, got: {kind:?}")),
     }
 }

@@ -61,12 +61,12 @@ pub fn upsert_user(
     npub: XOnlyPublicKey,
     emoji: &str,
     config: UserConfig,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let key = get_key(npub, emoji);
     let value = serde_json::to_vec(&config).unwrap();
-    db.insert(key.as_bytes(), value)?;
+    let prev = db.insert(key.as_bytes(), value)?;
 
-    Ok(())
+    Ok(prev.is_some())
 }
 
 pub fn get_user(

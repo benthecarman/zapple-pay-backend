@@ -8,9 +8,12 @@ use lnurl::Error;
 use nostr::hashes::hex::ToHex;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
+use nostr::Keys;
+use nostr_sdk::Client;
 use serde::{Deserialize, Serialize};
 use sled::Db;
 use std::str::FromStr;
+use tokio::spawn;
 
 pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
     eprintln!("Error: {:?}", err);
@@ -92,6 +95,27 @@ pub struct DonationConfig {
     pub lnurl: String,
 }
 
+async fn send_config_dm(
+    keys: Keys,
+    npub: XOnlyPublicKey,
+    emoji: String,
+    amt: u64,
+) -> anyhow::Result<()> {
+    let client = Client::new(&keys);
+    client
+        .add_relay("wss://nostr.mutinywallet.com", None)
+        .await?;
+    client.connect().await;
+
+    let content = format!("You have configured Zapple Pay to zap {} sats anytime you react to a note with a {} emoji!", amt, emoji);
+
+    let event_id = client.send_direct_msg(npub, content).await?;
+    println!("Sent DM: {}", event_id);
+    client.disconnect().await?;
+
+    Ok(())
+}
+
 pub(crate) fn set_user_config_impl(
     payload: SetUserConfig,
     state: &State,
@@ -110,6 +134,7 @@ pub(crate) fn set_user_config_impl(
     let npub = payload.npub;
     match payload.into_db() {
         Ok(config) => {
+            let amt = config.amount_sats;
             crate::db::upsert_user(&state.db, npub, &emoji_str, config)?;
 
             let npub_hex = npub.to_hex();
@@ -124,6 +149,9 @@ pub(crate) fn set_user_config_impl(
                     true
                 }
             });
+
+            let keys = state.server_keys.clone();
+            spawn(send_config_dm(keys, npub, emoji_str, amt));
 
             get_user_configs_impl(npub, &state.db)
         }
@@ -314,8 +342,13 @@ mod test {
 
         let (tx, _) = watch::channel(vec![]);
         let pubkeys = Arc::new(Mutex::new(tx));
+        let server_keys = Keys::generate();
 
-        State { db, pubkeys }
+        State {
+            db,
+            pubkeys,
+            server_keys,
+        }
     }
 
     fn teardown_database(db_name: &str) {

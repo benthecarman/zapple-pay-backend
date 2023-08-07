@@ -32,6 +32,7 @@ mod subscriber;
 pub struct State {
     db: Db,
     pubkeys: Arc<Mutex<Sender<Vec<String>>>>,
+    pub server_keys: Keys,
 }
 
 #[tokio::main]
@@ -87,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
     let state = State {
         db,
         pubkeys: tx_shared.clone(),
+        server_keys: keys.server_keys(),
     };
 
     let addr: std::net::SocketAddr = format!("{}:{}", config.bind, config.port)

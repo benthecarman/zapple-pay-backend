@@ -229,11 +229,6 @@ async fn handle_reaction(
         }
     });
 
-    let event_id = match event_id {
-        None => return Err(anyhow!("No e tag found")),
-        Some(e) => e,
-    };
-
     let p_tag = tags.into_iter().find_map(|tag| {
         if let Tag::PubKey(p, _) = tag {
             Some(p)
@@ -249,7 +244,7 @@ async fn handle_reaction(
 
     pay_user(
         p_tag,
-        Some(event_id),
+        event_id,
         None,
         db,
         client,

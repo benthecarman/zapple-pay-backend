@@ -108,9 +108,16 @@ pub fn get_user_configs(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<Vec<Use
 
     let mut configs = vec![];
     for result in value {
-        let (_, value) = result?;
-        let config = serde_json::from_slice(&value)?;
-        configs.push(config);
+        let (key, value) = result?;
+
+        if let Ok(str) = String::from_utf8(key.to_vec()) {
+            // drop first 64 chars
+            let emoji = &str[65..];
+
+            let mut config: UserConfig = serde_json::from_slice(&value)?;
+            config.emoji = Some(emoji.to_string());
+            configs.push(config);
+        }
     }
 
     Ok(configs)

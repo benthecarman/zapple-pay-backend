@@ -53,7 +53,7 @@ pub struct DonationConfig {
 }
 
 fn get_key(npub: XOnlyPublicKey, emoji: &str) -> String {
-    format!("{}:{}", npub.to_string(), emoji)
+    format!("{}:{}", npub, emoji)
 }
 
 pub fn upsert_user(

@@ -131,6 +131,10 @@ pub(crate) fn set_user_config_impl(
 
     let emoji_str = payload.emoji().trim().to_string();
 
+    if emoji_str.is_empty() {
+        return Err(anyhow::anyhow!("Invalid emoji"));
+    }
+
     let npub = payload.npub;
     match payload.into_db() {
         Ok(config) => {

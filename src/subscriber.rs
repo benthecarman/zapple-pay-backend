@@ -373,11 +373,16 @@ async fn pay_user(
         }
         futures::future::join_all(futs).await;
     } else {
-        return Err(anyhow!(
-            "Config not found: {} {}",
-            event.pubkey,
-            event.content
-        ));
+        let content: String = event.content.chars().take(5).collect();
+
+        // if we truncated, add ...
+        let err = if content != event.content {
+            anyhow!("Config not found: {} {}...", event.pubkey, content)
+        } else {
+            anyhow!("Config not found: {} {}", event.pubkey, content)
+        };
+
+        return Err(err);
     }
 
     Ok(())

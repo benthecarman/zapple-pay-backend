@@ -1,7 +1,7 @@
 use crate::db::get_user;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
-use lightning_invoice::Invoice;
+use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
@@ -399,7 +399,7 @@ async fn get_invoice_from_lnurl(
     lnurl_client: &BlockingClient,
     amount_msats: u64,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
-) -> anyhow::Result<Invoice> {
+) -> anyhow::Result<Bolt11Invoice> {
     let pay = {
         let cache_result = {
             let cache = pay_cache.lock().unwrap();

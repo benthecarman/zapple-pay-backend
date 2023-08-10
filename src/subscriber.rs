@@ -379,13 +379,13 @@ async fn pay_user(
         }
         futures::future::join_all(futs).await;
     } else {
-        let content: String = event.content.chars().take(5).collect();
+        let truncated: String = content.chars().take(5).collect();
 
         // if we truncated, add ...
-        let err = if content != event.content {
-            anyhow!("Config not found: {} {}...", event.pubkey, content)
+        let err = if content != truncated {
+            anyhow!("Config not found: {} {}...", event.pubkey, truncated)
         } else {
-            anyhow!("Config not found: {} {}", event.pubkey, content)
+            anyhow!("Config not found: {} {}", event.pubkey, truncated)
         };
 
         return Err(err);

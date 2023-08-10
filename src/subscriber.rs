@@ -38,7 +38,7 @@ pub async fn start_subscription(
         client.add_relay("wss://nostr.wine", None).await?;
         client.add_relay("wss://nos.lol", None).await?;
         client.add_relay("wss://nostr.fmt.wiz.biz", None).await?;
-        client.add_relay("wss://nostr.zebedee.cloud", None).await?;
+        client.add_relay("wss://nostr.zbd.gg", None).await?;
         client.add_relay("wss://relay.damus.io", None).await?;
         client.connect().await;
 

@@ -269,11 +269,12 @@ async fn pay_user(
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
-    let content = if event.kind == Kind::Reaction && event.content.is_empty() {
-        "❤️"
-    } else {
-        &event.content
-    };
+    let content =
+        if event.kind == Kind::Reaction && (event.content.is_empty() || event.content == "+") {
+            "❤️"
+        } else {
+            &event.content
+        };
 
     if let Some(user) = get_user(db, event.pubkey, content, true)? {
         println!(

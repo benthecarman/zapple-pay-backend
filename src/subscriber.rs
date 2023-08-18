@@ -11,9 +11,9 @@ use lnurl::LnUrlResponse::LnUrlPayResponse;
 use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
-use nostr::prelude::{encrypt, ToBech32};
+use nostr::prelude::{encrypt, PayInvoiceRequestParams, ToBech32};
 use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
-use nostr_sdk::{Client, RelayPoolNotification};
+use nostr_sdk::{Client, Options, RelayPoolNotification};
 use serde_json::Value;
 use sled::Db;
 use std::collections::HashMap;
@@ -35,7 +35,8 @@ pub async fn start_subscription(
     let pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>> = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
-        let client = Client::new(&keys);
+        let opts = Options::new().shutdown_on_drop(true);
+        let client = Client::with_opts(&keys, opts);
         // todo make this configurable
         client.add_relay("wss://nostr.wine", None).await?;
         client.add_relay("wss://nos.lol", None).await?;
@@ -93,6 +94,7 @@ pub async fn start_subscription(
                             println!("Relay pool shutdown");
                             break;
                         }
+                        RelayPoolNotification::Stop => {}
                         RelayPoolNotification::Message(_, _) => {}
                     }
                 }
@@ -536,8 +538,9 @@ async fn pay_to_lnurl(
 
     let event = create_nwc_request(nwc, invoice.to_string());
 
+    let opts = Options::new().shutdown_on_drop(true);
     let keys = Keys::new(nwc.secret);
-    let client = Client::new(&keys);
+    let client = Client::with_opts(&keys, opts);
     client.add_relay(nwc.relay_url.to_string(), None).await?;
     client.connect().await;
     client.send_event(event).await?;
@@ -550,7 +553,7 @@ async fn pay_to_lnurl(
 fn create_nwc_request(nwc: &NostrWalletConnectURI, invoice: String) -> Event {
     let req = Request {
         method: Method::PayInvoice,
-        params: RequestParams { invoice },
+        params: RequestParams::PayInvoice(PayInvoiceRequestParams { invoice }),
     };
 
     let encrypted = encrypt(&nwc.secret, &nwc.public_key, req.as_json()).unwrap();

@@ -1,6 +1,8 @@
 use crate::db::get_user;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
+use futures::future::Either;
+use futures::future::Either::{Left, Right};
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
@@ -27,7 +29,7 @@ pub async fn start_subscription(
 ) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_blocking()?;
 
-    let lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>> =
+    let lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
     let pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -110,7 +112,7 @@ async fn handle_event(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     match event.kind {
@@ -149,7 +151,7 @@ async fn handle_live_chat(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
@@ -216,7 +218,7 @@ async fn handle_reaction(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
@@ -266,7 +268,7 @@ async fn pay_user(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrl>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let content =
@@ -285,19 +287,30 @@ async fn pay_user(
         let nwc = user.nwc();
 
         let lnurl = {
-            let cache_result = {
+            let (cache_result, timestamp) = {
                 let cache = lnurl_cache.lock().unwrap();
-                cache.get(&user_key).cloned()
+                let cache = cache.get(&user_key);
+                match cache {
+                    None => (None, None),
+                    Some(either) => match either {
+                        Left(lnurl) => (Some(lnurl.clone()), None),
+                        Right(timestamp) => (None, Some(*timestamp)),
+                    },
+                }
             };
             match cache_result {
                 Some(lnurl) => lnurl,
                 None => {
                     println!("No lnurl in cache, fetching...");
 
-                    let metadata_filter = Filter::new()
+                    let mut metadata_filter = Filter::new()
                         .kind(Kind::Metadata)
                         .author(user_key.to_hex())
                         .limit(1);
+
+                    if let Some(timestamp) = timestamp {
+                        metadata_filter = metadata_filter.since(Timestamp::from(timestamp));
+                    }
 
                     let timeout = Duration::from_secs(20);
                     let events = client
@@ -329,6 +342,10 @@ async fn pay_user(
                                     lnurl = Some(url);
                                     break;
                                 }
+
+                                let mut cache = lnurl_cache.lock().unwrap();
+                                cache.insert(user_key, Right(event.created_at.as_u64()));
+
                                 return Err(anyhow!("Profile has no lnurl or lightning address"));
                             }
                         }
@@ -341,7 +358,7 @@ async fn pay_user(
                     };
 
                     let mut cache = lnurl_cache.lock().unwrap();
-                    cache.insert(user_key, lnurl.clone());
+                    cache.insert(user_key, Left(lnurl.clone()));
 
                     lnurl
                 }

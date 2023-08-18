@@ -11,7 +11,7 @@ use lnurl::LnUrlResponse::LnUrlPayResponse;
 use lnurl::{BlockingClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
-use nostr::prelude::{encrypt, ToBech32};
+use nostr::prelude::{encrypt, PayInvoiceRequestParams, ToBech32};
 use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
@@ -93,6 +93,7 @@ pub async fn start_subscription(
                             println!("Relay pool shutdown");
                             break;
                         }
+                        RelayPoolNotification::Stop => {}
                         RelayPoolNotification::Message(_, _) => {}
                     }
                 }
@@ -550,7 +551,7 @@ async fn pay_to_lnurl(
 fn create_nwc_request(nwc: &NostrWalletConnectURI, invoice: String) -> Event {
     let req = Request {
         method: Method::PayInvoice,
-        params: RequestParams { invoice },
+        params: RequestParams::PayInvoice(PayInvoiceRequestParams { invoice }),
     };
 
     let encrypted = encrypt(&nwc.secret, &nwc.public_key, req.as_json()).unwrap();

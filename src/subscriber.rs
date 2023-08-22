@@ -55,7 +55,7 @@ pub async fn start_subscription(
 
         client.subscribe(vec![subscription]).await;
 
-        println!("Listening for nip 7 reactions...");
+        println!("Listening for events...");
 
         let mut notifications = client.notifications();
         loop {

@@ -1,3 +1,4 @@
+use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
@@ -135,6 +136,34 @@ pub fn delete_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<()> {
     for result in value {
         let (key, _) = result?;
         db.remove(key)?;
+    }
+
+    Ok(())
+}
+
+pub fn migrate_jb55_lnurl(db: &Db) -> anyhow::Result<()> {
+    for result in db.iter() {
+        let (key, value) = result?;
+        let mut config: UserConfig = serde_json::from_slice(&value)?;
+
+        if config.donations.is_none() {
+            continue;
+        }
+
+        for item in config.donations.as_mut().unwrap().iter_mut() {
+            if item.lnurl
+                == LightningAddress::from_str("jb55@sendsats.lol")
+                    .unwrap()
+                    .lnurl()
+            {
+                item.lnurl = LightningAddress::from_str("jb55@getalby.com")
+                    .unwrap()
+                    .lnurl()
+            }
+        }
+
+        let value = serde_json::to_vec(&config)?;
+        db.insert(key, value)?;
     }
 
     Ok(())

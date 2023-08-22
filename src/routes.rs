@@ -318,6 +318,13 @@ pub async fn count(
     Ok(Json(state.db.len()))
 }
 
+pub async fn migrate(Extension(state): Extension<State>) -> Result<Json<()>, (StatusCode, String)> {
+    match crate::db::migrate_jb55_lnurl(&state.db) {
+        Ok(_) => Ok(Json(())),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::routes::*;

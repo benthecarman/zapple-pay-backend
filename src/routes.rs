@@ -109,7 +109,7 @@ async fn send_config_dm(
 
     let content = format!("You have configured Zapple Pay to zap {} sats anytime you react to a note with a {} emoji!", amt, emoji);
 
-    let event_id = client.send_direct_msg(npub, content).await?;
+    let event_id = client.send_direct_msg(npub, content, None).await?;
     println!("Sent DM: {}", event_id);
     client.disconnect().await?;
 

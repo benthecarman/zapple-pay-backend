@@ -42,6 +42,7 @@ pub async fn start_subscription(
         client.add_relay("wss://nostr.fmt.wiz.biz", None).await?;
         client.add_relay("wss://nostr.zbd.gg", None).await?;
         client.add_relay("wss://relay.damus.io", None).await?;
+        client.add_relay("wss://purplepag.es", None).await?;
         client.connect().await;
 
         let authors: Vec<String> = rx.borrow().clone();

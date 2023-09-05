@@ -17,6 +17,7 @@ use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
 use sled::Db;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -540,7 +541,18 @@ async fn pay_to_lnurl(
 
     let keys = Keys::new(nwc.secret);
     let client = Client::new(&keys);
-    client.add_relay(nwc.relay_url.to_string(), None).await?;
+
+    let proxy = if nwc
+        .relay_url
+        .host_str()
+        .is_some_and(|h| h.ends_with(".onion"))
+    {
+        Some(SocketAddr::from_str("127.0.0.1:9050")?)
+    } else {
+        None
+    };
+
+    client.add_relay(&nwc.relay_url, proxy).await?;
     client.connect().await;
     client.send_event(event).await?;
     client.disconnect().await?;

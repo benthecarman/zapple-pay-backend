@@ -436,7 +436,15 @@ async fn get_invoice_from_lnurl(
             Some(pay) => pay,
             None => {
                 println!("No pay in cache, fetching...");
-                let resp = lnurl_client.make_request(&lnurl.url)?;
+                let resp = if lnurl.url.contains(".onion") {
+                    Builder::default()
+                        .proxy("127.0.0.1:9050")
+                        .build_blocking()?
+                        .make_request(&lnurl.url)?
+                } else {
+                    lnurl_client.make_request(&lnurl.url)?
+                };
+
                 if let LnUrlPayResponse(pay) = resp {
                     // don't cache voltage lnurls, they change everytime
                     if !lnurl.url.contains("vlt.ge") {

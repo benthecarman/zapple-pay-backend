@@ -482,8 +482,11 @@ async fn get_invoice_from_lnurl(
     };
 
     let invoice = {
-        let res =
-            lnurl_client.get_invoice(&pay, amount_msats, zap_request.clone().map(|e| e.as_json()));
+        let res = lnurl_client.get_invoice(
+            &pay,
+            amount_msats,
+            zap_request.as_ref().map(|e| e.as_json()),
+        );
 
         match res {
             Ok(inv) => inv.invoice(),

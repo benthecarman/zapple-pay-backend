@@ -25,8 +25,8 @@ use tokio::sync::watch::Receiver;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LnUrlCacheResult {
-    /// Successful result, contains the lnurl
-    LnUrl(LnUrl),
+    /// Successful result, contains the lnurl and the timestamp we got it
+    LnUrl((LnUrl, u64)),
     /// Failed result, contains the timestamp of the last metadata event
     Timestamp(u64),
 }
@@ -305,7 +305,14 @@ async fn pay_user(
                 match cache {
                     None => (None, None),
                     Some(either) => match either {
-                        LnUrlCacheResult::LnUrl(lnurl) => (Some(lnurl.clone()), None),
+                        LnUrlCacheResult::LnUrl((lnurl, timestamp)) => {
+                            // if we got the lnurl more than 24 hours ago, return None
+                            if Timestamp::now().as_u64() - timestamp > 60 * 60 * 24 {
+                                (None, None)
+                            } else {
+                                (Some(lnurl.clone()), None)
+                            }
+                        }
                         LnUrlCacheResult::Timestamp(timestamp) => (None, Some(*timestamp)),
                     },
                 }
@@ -373,7 +380,8 @@ async fn pay_user(
                     };
 
                     let mut cache = lnurl_cache.lock().unwrap();
-                    cache.insert(user_key, LnUrlCacheResult::LnUrl(lnurl.clone()));
+                    let now = Timestamp::now().as_u64();
+                    cache.insert(user_key, LnUrlCacheResult::LnUrl((lnurl.clone(), now)));
 
                     lnurl
                 }

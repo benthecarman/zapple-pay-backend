@@ -7,7 +7,6 @@ use axum::{Extension, Json};
 use diesel::Connection;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
-use lnurl::Error;
 use nostr::hashes::hex::ToHex;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
@@ -29,65 +28,38 @@ pub struct SetUserConfig {
     #[serde(skip_serializing_if = "String::is_empty")]
     nwc: String,
     pub emoji: Option<String>,
-    donations: Option<Vec<DonationConfig>>,
+    pub donations: Option<Vec<DonationConfig>>,
 }
 
 impl SetUserConfig {
-    pub fn donations(&self) -> Vec<DonationConfig> {
-        self.donations.clone().unwrap_or_default()
+    pub fn verify(&self) -> anyhow::Result<()> {
+        if self.amount_sats == 0 {
+            return Err(anyhow::anyhow!("Invalid amount"));
+        }
+
+        if NostrWalletConnectURI::from_str(&self.nwc).is_err() {
+            return Err(anyhow::anyhow!("Invalid nwc"));
+        }
+
+        // verify donations have a valid lnurl / lightning address
+        if self.donations.as_ref().map_or(false, |d| {
+            d.iter().any(|donation| {
+                LnUrl::from_str(&donation.lnurl).is_err()
+                    && LightningAddress::from_str(&donation.lnurl).is_err()
+            })
+        }) {
+            return Err(anyhow::anyhow!("Invalid lnurl in donation"));
+        }
+
+        Ok(())
     }
 
     pub fn emoji(&self) -> String {
         self.emoji.clone().unwrap_or("⚡".to_string())
     }
 
-    pub fn into_db(self) -> anyhow::Result<crate::db::UserConfig> {
-        let donations = self
-            .donations
-            .unwrap_or_default()
-            .into_iter()
-            .map(|donation| {
-                let lnurl = LnUrl::from_str(&donation.lnurl)
-                    .or_else(|_| LightningAddress::from_str(&donation.lnurl).map(|l| l.lnurl()));
-
-                match lnurl {
-                    Ok(lnurl) => Ok(crate::db::DonationConfig {
-                        amount_sats: donation.amount_sats,
-                        lnurl,
-                    }),
-                    Err(e) => Err(e),
-                }
-            })
-            .collect::<Vec<Result<crate::db::DonationConfig, Error>>>();
-
-        let errors = donations
-            .iter()
-            .filter_map(|res| match res {
-                Ok(_) => None,
-                Err(e) => Some(e.to_string()),
-            })
-            .collect::<Vec<String>>();
-
-        if !errors.is_empty() {
-            return Err(anyhow::anyhow!("Invalid lnurl: {errors:?}"));
-        }
-
-        let donations = donations
-            .into_iter()
-            .filter_map(|res| match res {
-                Ok(donation) => Some(donation),
-                Err(_) => None,
-            })
-            .collect::<Vec<crate::db::DonationConfig>>();
-
-        let nwc = self
-            .nwc
-            .replace("nostrwalletconnect", "nostr+walletconnect");
-
-        let nwc =
-            NostrWalletConnectURI::from_str(&nwc).map_err(|e| anyhow::anyhow!("{e}: {nwc}"))?;
-
-        Ok(crate::db::UserConfig::new(self.amount_sats, nwc, donations))
+    pub fn nwc(&self) -> NostrWalletConnectURI {
+        NostrWalletConnectURI::from_str(&self.nwc).unwrap()
     }
 }
 
@@ -122,14 +94,7 @@ pub(crate) fn set_user_config_impl(
     payload: SetUserConfig,
     state: &State,
 ) -> anyhow::Result<Vec<SetUserConfig>> {
-    let valid = payload.donations().iter().all(|donation| {
-        LnUrl::from_str(&donation.lnurl).is_ok()
-            || LightningAddress::from_str(&donation.lnurl).is_ok()
-    });
-
-    if !valid {
-        return Err(anyhow::anyhow!("Invalid lnurl"));
-    }
+    payload.verify()?;
 
     let emoji_str = payload.emoji().trim().to_string();
 
@@ -138,32 +103,27 @@ pub(crate) fn set_user_config_impl(
     }
 
     let npub = payload.npub;
-    match payload.into_db() {
-        Ok(config) => {
-            let amt = config.amount_sats;
-            let mut conn = state.db_pool.get()?;
-            crate::models::upsert_user(&mut conn, &npub, emoji_str.clone(), config)?;
+    let amt = payload.amount_sats;
+    let mut conn = state.db_pool.get()?;
+    crate::models::upsert_user(&mut conn, &npub, emoji_str.clone(), payload)?;
 
-            let npub_hex = npub.to_hex();
-            println!("New user: {}!", npub_hex);
-            // notify new key
-            let keys = state.pubkeys.lock().unwrap();
-            keys.send_if_modified(|current| {
-                if current.contains(&npub_hex) {
-                    false
-                } else {
-                    current.push(npub_hex);
-                    true
-                }
-            });
-
-            let keys = state.server_keys.clone();
-            spawn(send_config_dm(keys, npub, emoji_str, amt));
-
-            get_user_configs_impl(npub, state)
+    let npub_hex = npub.to_hex();
+    println!("New user: {npub_hex}!");
+    // notify new key
+    let keys = state.pubkeys.lock().unwrap();
+    keys.send_if_modified(|current| {
+        if current.contains(&npub_hex) {
+            false
+        } else {
+            current.push(npub_hex);
+            true
         }
-        Err(e) => Err(e),
-    }
+    });
+
+    let keys = state.server_keys.clone();
+    spawn(send_config_dm(keys, npub, emoji_str, amt));
+
+    get_user_configs_impl(npub, state)
 }
 
 pub async fn set_user_config(

@@ -25,7 +25,6 @@ use tokio::sync::watch::Sender;
 use tower_http::cors::{Any, CorsLayer};
 
 mod config;
-mod db;
 mod listener;
 mod models;
 mod routes;

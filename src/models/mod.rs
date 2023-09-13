@@ -1,7 +1,7 @@
-use crate::db::UserConfig;
 use crate::models::donation::{Donation, NewDonation};
 use crate::models::user::NewUser;
 use crate::models::zap_config::{NewZapConfig, ZapConfig};
+use crate::routes::SetUserConfig;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
@@ -57,7 +57,7 @@ pub fn upsert_user(
     conn: &mut PgConnection,
     npub: &XOnlyPublicKey,
     emoji: String,
-    config: UserConfig,
+    config: SetUserConfig,
 ) -> anyhow::Result<()> {
     conn.transaction::<_, Error, _>(|conn| {
         let user = NewUser {
@@ -92,7 +92,7 @@ pub fn upsert_user(
             .execute(conn)?;
 
         // insert new donations configs
-        let donate_configs = config.donations();
+        let donate_configs = config.donations.unwrap_or_default();
         if !donate_configs.is_empty() {
             let donations = donate_configs
                 .into_iter()

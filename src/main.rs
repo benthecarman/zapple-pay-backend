@@ -1,11 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
-use std::fs::File;
-use std::io::{BufReader, Write};
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-
+use crate::config::*;
+use crate::models::user::User;
+use crate::models::MIGRATIONS;
+use crate::routes::*;
 use axum::http::{Method, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{http, Extension, Router};
@@ -14,19 +12,17 @@ use clap::Parser;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
 use diesel_migrations::MigrationHarness;
-use nostr::key::{SecretKey, XOnlyPublicKey};
+use nostr::key::SecretKey;
 use nostr::Keys;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_reader, to_string};
-use sled::Db;
+use std::fs::File;
+use std::io::{BufReader, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tower_http::cors::{Any, CorsLayer};
-
-use crate::config::*;
-use crate::models::user::User;
-use crate::models::MIGRATIONS;
-use crate::routes::*;
 
 mod config;
 mod db;
@@ -36,7 +32,6 @@ mod routes;
 
 #[derive(Clone)]
 pub struct State {
-    db: Db,
     db_pool: Pool<ConnectionManager<PgConnection>>,
     pubkeys: Arc<Mutex<Sender<Vec<String>>>>,
     pub server_keys: Keys,
@@ -49,15 +44,6 @@ async fn main() -> anyhow::Result<()> {
     // Create the datadir if it doesn't exist
     let path = PathBuf::from(&config.data_dir);
     std::fs::create_dir_all(path.clone())?;
-
-    let db_path = {
-        let mut path = path.clone();
-        path.push("sled.db");
-        path
-    };
-
-    // DB management
-    let db = sled::open(&db_path)?;
 
     // DB management
     let manager = ConnectionManager::<PgConnection>::new(&config.pg_url);
@@ -82,25 +68,6 @@ async fn main() -> anyhow::Result<()> {
     let keys = get_keys(keys_path);
 
     let mut start = vec![];
-    db.scan_prefix("").for_each(|res| {
-        res.map(|(k, _)| {
-            if let Ok(str) = String::from_utf8(k.to_vec()) {
-                // take first 64 chars
-                let pubkey_str = str.chars().take(64).collect::<String>();
-
-                let xonly = XOnlyPublicKey::from_str(&pubkey_str)
-                    .map_err(|e| {
-                        println!("Failed to parse pubkey ({pubkey_str}) from db: {e}");
-                    })
-                    .ok();
-
-                if let Some(xonly) = xonly {
-                    start.push(xonly.to_hex());
-                }
-            }
-        })
-        .unwrap();
-    });
 
     let from_db = User::get_all_npubs(&mut connection)?
         .into_iter()
@@ -117,7 +84,6 @@ async fn main() -> anyhow::Result<()> {
     let tx_shared = Arc::new(Mutex::new(tx));
 
     let state = State {
-        db,
         db_pool,
         pubkeys: tx_shared.clone(),
         server_keys: keys.server_keys(),
@@ -136,7 +102,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/count", get(count))
         .route("/get-user/:npub/:emoji", get(get_user_config))
         .route("/get-user/:npub", get(get_user_configs))
-        .route("/migrate", get(migrate))
         .fallback(fallback)
         .layer(Extension(state.clone()))
         .layer(

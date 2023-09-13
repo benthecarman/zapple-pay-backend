@@ -357,28 +357,11 @@ pub async fn count(
     }
 }
 
-pub async fn migrate(Extension(state): Extension<State>) -> Result<Json<()>, (StatusCode, String)> {
-    let mut conn = state.db_pool.get().map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            String::from("{\"status\":\"ERROR\",\"reason\":\"Could not get db connection\"}"),
-        )
-    })?;
-
-    match crate::db::migrate_to_postgres(&state.db, &mut conn) {
-        Ok(_) => Ok(Json(())),
-        Err(e) => Err(handle_anyhow_error(e)),
-    }
-}
-
 #[cfg(test)]
 mod test {
     use crate::models::MIGRATIONS;
     use crate::routes::*;
     use crate::State;
-    use bitcoin::hashes::hex::ToHex;
-    use bitcoin::secp256k1::rand;
-    use bitcoin::secp256k1::rand::Rng;
     use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::{PgConnection, RunQueryDsl};
     use diesel_migrations::MigrationHarness;
@@ -388,19 +371,7 @@ mod test {
     const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
     const NWC: &str = "nostr+walletconnect://246be70a7e4966f138e9e48401f33c32a1c428bbfb7aab42e3946beb8bc15e7c?relay=wss%3A%2F%2Fnostr.mutinywallet.com%2F&secret=23ea701003500d852ba2756460099217f839e1fbc9665e493b56bd2d5912e31b";
 
-    fn gen_tmp_db_name() -> String {
-        let rng = rand::thread_rng();
-        let rand_string: String = rng
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(30)
-            .collect::<Vec<u8>>()
-            .to_hex();
-        format!("/tmp/zapple_pay_{}.sled", rand_string)
-    }
-
     fn init_state() -> State {
-        let db_name = gen_tmp_db_name();
-        let db = sled::open(db_name).unwrap();
         let manager = ConnectionManager::<PgConnection>::new(
             "postgres://username:password@localhost/zapple-pay",
         );
@@ -421,7 +392,6 @@ mod test {
         let server_keys = Keys::generate();
 
         State {
-            db,
             db_pool,
             pubkeys,
             server_keys,

@@ -4,8 +4,6 @@ use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
-use futures::future::Either;
-use futures::future::Either::{Left, Right};
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
@@ -25,6 +23,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LnUrlCacheResult {
+    /// Successful result, contains the lnurl
+    LnUrl(LnUrl),
+    /// Failed result, contains the timestamp of the last metadata event
+    Timestamp(u64),
+}
+
 pub async fn start_listener(
     db_pool: Pool<ConnectionManager<PgConnection>>,
     mut rx: Receiver<Vec<String>>,
@@ -32,7 +38,7 @@ pub async fn start_listener(
 ) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_blocking()?;
 
-    let lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>> =
+    let lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
     let pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -117,7 +123,7 @@ async fn handle_event(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     match event.kind {
@@ -156,7 +162,7 @@ async fn handle_live_chat(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
@@ -223,7 +229,7 @@ async fn handle_reaction(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
@@ -273,7 +279,7 @@ async fn pay_user(
     lnurl_client: &BlockingClient,
     event: Event,
     keys: &Keys,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, Either<LnUrl, u64>>>>,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let content =
@@ -299,8 +305,8 @@ async fn pay_user(
                 match cache {
                     None => (None, None),
                     Some(either) => match either {
-                        Left(lnurl) => (Some(lnurl.clone()), None),
-                        Right(timestamp) => (None, Some(*timestamp)),
+                        LnUrlCacheResult::LnUrl(lnurl) => (Some(lnurl.clone()), None),
+                        LnUrlCacheResult::Timestamp(timestamp) => (None, Some(*timestamp)),
                     },
                 }
             };
@@ -350,7 +356,10 @@ async fn pay_user(
                                 }
 
                                 let mut cache = lnurl_cache.lock().unwrap();
-                                cache.insert(user_key, Right(event.created_at.as_u64()));
+                                cache.insert(
+                                    user_key,
+                                    LnUrlCacheResult::Timestamp(event.created_at.as_u64()),
+                                );
 
                                 return Err(anyhow!("Profile has no lnurl or lightning address"));
                             }
@@ -364,7 +373,7 @@ async fn pay_user(
                     };
 
                     let mut cache = lnurl_cache.lock().unwrap();
-                    cache.insert(user_key, Left(lnurl.clone()));
+                    cache.insert(user_key, LnUrlCacheResult::LnUrl(lnurl.clone()));
 
                     lnurl
                 }

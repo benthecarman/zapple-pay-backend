@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(version, author, about)]
 /// A tool for zapping based on reactions to notes.
 pub struct Config {
-    #[clap(default_value_t = String::from("."), long)]
+    #[clap(default_value = ".", long)]
     /// Location keys files
     pub data_dir: String,
     #[clap(long)]
@@ -13,7 +13,7 @@ pub struct Config {
     #[clap(short, long)]
     /// Relay to connect to, can be specified multiple times
     pub relay: Vec<String>,
-    #[clap(default_value_t = String::from("0.0.0.0"), long)]
+    #[clap(default_value = "0.0.0.0", long)]
     /// Bind address for zap-tunnel's webserver
     pub bind: String,
     #[clap(default_value_t = 3000, long)]

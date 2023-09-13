@@ -73,6 +73,7 @@ pub async fn start_listener(
                 Ok(notification) = notifications.recv() => {
                     match notification {
                         RelayPoolNotification::Event(_url, event) => {
+                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| tag.kind() == TagKind::P) {
                                 tokio::spawn({
                                     let db_pool = db_pool.clone();
                                     let client = client.clone();
@@ -98,6 +99,7 @@ pub async fn start_listener(
                                         }
                                     }
                                 });
+                            }
                         }
                         RelayPoolNotification::Shutdown => {
                             println!("Relay pool shutdown");

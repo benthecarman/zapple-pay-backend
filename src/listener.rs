@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
 
-pub async fn start_subscription(
+pub async fn start_listener(
     db_pool: Pool<ConnectionManager<PgConnection>>,
     mut rx: Receiver<Vec<String>>,
     keys: Keys,

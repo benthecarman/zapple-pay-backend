@@ -30,9 +30,9 @@ use crate::routes::*;
 
 mod config;
 mod db;
+mod listener;
 mod models;
 mod routes;
-mod subscriber;
 
 #[derive(Clone)]
 pub struct State {
@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    tokio::spawn(subscriber::start_subscription(
+    tokio::spawn(listener::start_listener(
         state.db_pool,
         rx,
         keys.server_keys(),

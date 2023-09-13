@@ -30,6 +30,7 @@ pub struct ZapConfig {
     pub emoji: String,
     pub amount: i32,
     nwc: String,
+    created_at: chrono::NaiveDateTime,
 }
 
 #[derive(Insertable, AsChangeset)]
@@ -42,16 +43,6 @@ pub struct NewZapConfig<'a> {
 }
 
 impl ZapConfig {
-    pub fn new(user_id: i32, emoji: String, amount: i32, nwc: &NostrWalletConnectURI) -> Self {
-        Self {
-            id: 0,
-            user_id,
-            emoji,
-            amount,
-            nwc: nwc.to_string(),
-        }
-    }
-
     pub fn nwc(&self) -> NostrWalletConnectURI {
         NostrWalletConnectURI::from_str(&self.nwc).expect("invalid nwc")
     }

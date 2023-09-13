@@ -11,7 +11,8 @@ path = "src/main.rs"
 anyhow = "1.0"
 axum = "0.6.16"
 bitcoin = "0.29.2"
-diesel = { version = "2.1", features = ["postgres", "r2d2", "numeric"] }
+chrono = { version = "0.4.26", features = ["serde"] }
+diesel = { version = "2.1", features = ["postgres", "r2d2", "chrono", "numeric"] }
 diesel_migrations = "2.0.0"
 lightning = "0.0.116"
 lightning-invoice = "0.24.0"

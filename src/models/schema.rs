@@ -17,6 +17,7 @@ diesel::table! {
         amount -> Int4,
         time_period -> Text,
         nwc -> Text,
+        created_at -> Timestamptz,
     }
 }
 
@@ -24,6 +25,7 @@ diesel::table! {
     users (id) {
         id -> Int4,
         npub -> Text,
+        created_at -> Timestamptz,
     }
 }
 
@@ -34,6 +36,7 @@ diesel::table! {
         emoji -> Text,
         amount -> Int4,
         nwc -> Text,
+        created_at -> Timestamptz,
     }
 }
 
@@ -44,6 +47,7 @@ diesel::table! {
         to_npub -> Text,
         config_type -> Text,
         amount -> Int4,
+        created_at -> Timestamptz,
     }
 }
 

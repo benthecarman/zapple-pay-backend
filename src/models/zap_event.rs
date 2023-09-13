@@ -26,6 +26,7 @@ pub struct ZapEvent {
     to_npub: String,
     config_type: String,
     amount: i32,
+    created_at: chrono::NaiveDateTime,
 }
 
 #[derive(Insertable, AsChangeset)]

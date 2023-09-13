@@ -22,6 +22,7 @@ use super::schema::users;
 pub struct User {
     pub id: i32,
     npub: String,
+    created_at: chrono::NaiveDateTime,
 }
 
 #[derive(Insertable, AsChangeset)]
@@ -31,13 +32,6 @@ pub struct NewUser<'a> {
 }
 
 impl User {
-    pub fn new(pubkey: &XOnlyPublicKey) -> Self {
-        Self {
-            id: 0,
-            npub: pubkey.to_hex(),
-        }
-    }
-
     pub fn pubkey(&self) -> XOnlyPublicKey {
         XOnlyPublicKey::from_str(&self.npub).expect("invalid pubkey")
     }

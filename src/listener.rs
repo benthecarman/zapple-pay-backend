@@ -190,7 +190,7 @@ async fn handle_live_chat(
         Some(p) => (p, None),
         None => {
             let a_tag = tags.into_iter().find(|t| t.kind() == TagKind::A);
-            let user_key = a_tag.clone().and_then(|tag| {
+            let user_key = a_tag.as_ref().and_then(|tag| {
                 let tag = tag.as_vec();
                 let kpi: Vec<&str> = tag[1].split(':').collect();
                 let kind = Kind::from_str(kpi[0]).ok();

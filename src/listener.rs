@@ -446,7 +446,6 @@ async fn pay_user(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn get_invoice_from_lnurl(
     keys: &Keys,
     from_user: XOnlyPublicKey,
@@ -544,7 +543,6 @@ async fn get_invoice_from_lnurl(
     Ok(invoice)
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn pay_to_lnurl(
     keys: &Keys,
     from_user: XOnlyPublicKey,

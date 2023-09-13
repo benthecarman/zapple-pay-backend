@@ -32,10 +32,12 @@ enum LnUrlCacheResult {
 }
 
 pub async fn start_listener(
+    relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
     mut rx: Receiver<Vec<String>>,
     keys: Keys,
 ) -> anyhow::Result<()> {
+    println!("Using relays: {:?}", relays);
     let lnurl_client = Builder::default().build_blocking()?;
 
     let lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>> =
@@ -45,13 +47,9 @@ pub async fn start_listener(
 
     loop {
         let client = Client::new(&keys);
-        // todo make this configurable
-        client.add_relay("wss://nostr.wine", None).await?;
-        client.add_relay("wss://nos.lol", None).await?;
-        client.add_relay("wss://nostr.fmt.wiz.biz", None).await?;
-        client.add_relay("wss://nostr.zbd.gg", None).await?;
-        client.add_relay("wss://relay.damus.io", None).await?;
-        client.add_relay("wss://purplepag.es", None).await?;
+        for relay in relays.iter() {
+            client.add_relay(relay.as_str(), None).await?;
+        }
         client.connect().await;
 
         let authors: Vec<String> = rx.borrow().clone();

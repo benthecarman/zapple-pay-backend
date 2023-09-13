@@ -10,6 +10,9 @@ pub struct Config {
     #[clap(long)]
     /// Postgres connection string
     pub pg_url: String,
+    #[clap(short, long)]
+    /// Relay to connect to, can be specified multiple times
+    pub relay: Vec<String>,
     #[clap(default_value_t = String::from("0.0.0.0"), long)]
     /// Bind address for zap-tunnel's webserver
     pub bind: String,

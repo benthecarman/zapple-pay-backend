@@ -122,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tokio::spawn(listener::start_listener(
+        config.relay,
         state.db_pool,
         rx,
         keys.server_keys(),

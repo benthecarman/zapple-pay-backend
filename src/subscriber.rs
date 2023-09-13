@@ -1,3 +1,5 @@
+use crate::models::zap_event::ZapEvent;
+use crate::models::ConfigType;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -400,6 +402,15 @@ async fn pay_user(
             ));
         }
         futures::future::join_all(futs).await;
+
+        // create zap event
+        ZapEvent::create_zap_event(
+            &mut conn,
+            &user_key,
+            &event.pubkey,
+            ConfigType::Zap,
+            user.zap_config.amount,
+        )?;
     } else {
         let truncated: String = content.chars().take(5).collect();
 

@@ -9,13 +9,43 @@ use diesel::result::Error;
 use diesel::upsert::on_constraint;
 use diesel::{PgConnection, QueryDsl, RunQueryDsl};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 pub mod donation;
 pub mod schema;
 pub mod user;
 pub mod zap_config;
+pub mod zap_event;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ConfigType {
+    Zap,
+    Subscription,
+}
+
+impl core::fmt::Display for ConfigType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ConfigType::Zap => write!(f, "Zap"),
+            ConfigType::Subscription => write!(f, "Subscription"),
+        }
+    }
+}
+
+impl FromStr for ConfigType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Zap" => Ok(ConfigType::Zap),
+            "Subscription" => Ok(ConfigType::Subscription),
+            _ => Err(anyhow::anyhow!("Invalid ConfigType")),
+        }
+    }
+}
 
 pub struct UserZapConfig {
     pub npub: XOnlyPublicKey,

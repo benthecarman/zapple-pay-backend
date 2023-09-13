@@ -1,7 +1,10 @@
+use crate::models::user::User;
+use crate::models::zap_config::ZapConfig;
 use crate::State;
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::{Extension, Json};
+use diesel::Connection;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use lnurl::Error;
@@ -11,7 +14,6 @@ use nostr::nips::nip47::NostrWalletConnectURI;
 use nostr::Keys;
 use nostr_sdk::Client;
 use serde::{Deserialize, Serialize};
-use sled::Db;
 use std::str::FromStr;
 use tokio::spawn;
 
@@ -139,7 +141,8 @@ pub(crate) fn set_user_config_impl(
     match payload.into_db() {
         Ok(config) => {
             let amt = config.amount_sats;
-            crate::db::upsert_user(&state.db, npub, &emoji_str, config)?;
+            let mut conn = state.db_pool.get()?;
+            crate::models::upsert_user(&mut conn, &npub, emoji_str.clone(), config)?;
 
             let npub_hex = npub.to_hex();
             println!("New user: {}!", npub_hex);
@@ -157,7 +160,7 @@ pub(crate) fn set_user_config_impl(
             let keys = state.server_keys.clone();
             spawn(send_config_dm(keys, npub, emoji_str, amt));
 
-            get_user_configs_impl(npub, &state.db)
+            get_user_configs_impl(npub, state)
         }
         Err(e) => Err(e),
     }
@@ -176,16 +179,17 @@ pub async fn set_user_config(
 pub(crate) fn get_user_config_impl(
     npub: XOnlyPublicKey,
     emoji: String,
-    db: &Db,
+    state: &State,
 ) -> anyhow::Result<Option<SetUserConfig>> {
-    crate::db::get_user(db, npub, &emoji, true).map(|user| {
+    let mut conn = state.db_pool.get()?;
+    crate::models::get_user_zap_config(&mut conn, npub, &emoji).map(|user| {
         user.map(|user| {
             let donations = user
-                .donations()
+                .donations
                 .into_iter()
                 .map(|donation| DonationConfig {
-                    amount_sats: donation.amount_sats,
-                    lnurl: donation.lnurl.to_string(),
+                    amount_sats: donation.amount as u64,
+                    lnurl: donation.lnurl,
                 })
                 .collect::<Vec<DonationConfig>>();
 
@@ -197,9 +201,9 @@ pub(crate) fn get_user_config_impl(
 
             SetUserConfig {
                 npub,
-                amount_sats: user.amount_sats,
+                amount_sats: user.zap_config.amount as u64,
                 nwc: "".to_string(), // don't return the nwc
-                emoji: Some(user.emoji()),
+                emoji: Some(user.zap_config.emoji),
                 donations,
             }
         })
@@ -216,7 +220,7 @@ pub async fn get_user_config(
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
         )
     })?;
-    match get_user_config_impl(npub, emoji, &state.db) {
+    match get_user_config_impl(npub, emoji, &state) {
         Ok(Some(res)) => Ok(Json(res)),
         Ok(None) => Err((StatusCode::NOT_FOUND, String::from("{\"status\":\"ERROR\",\"reason\":\"The user you're searching for could not be found.\"}"))),
         Err(e) => Err(handle_anyhow_error(e)),
@@ -225,17 +229,18 @@ pub async fn get_user_config(
 
 pub(crate) fn get_user_configs_impl(
     npub: XOnlyPublicKey,
-    db: &Db,
+    state: &State,
 ) -> anyhow::Result<Vec<SetUserConfig>> {
-    crate::db::get_user_configs(db, npub).map(|configs| {
+    let mut conn = state.db_pool.get()?;
+    crate::models::get_user_zap_configs(&mut conn, npub).map(|configs| {
         configs
             .into_iter()
             .map(|user| {
                 let donations = user
-                    .donations()
+                    .donations
                     .into_iter()
                     .map(|donation| DonationConfig {
-                        amount_sats: donation.amount_sats,
+                        amount_sats: donation.amount as u64,
                         lnurl: donation.lnurl.to_string(),
                     })
                     .collect::<Vec<DonationConfig>>();
@@ -248,9 +253,9 @@ pub(crate) fn get_user_configs_impl(
 
                 SetUserConfig {
                     npub,
-                    amount_sats: user.amount_sats,
+                    amount_sats: user.zap_config.amount as u64,
                     nwc: "".to_string(), // don't return the nwc
-                    emoji: Some(user.emoji()),
+                    emoji: Some(user.zap_config.emoji),
                     donations,
                 }
             })
@@ -268,7 +273,7 @@ pub async fn get_user_configs(
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
         )
     })?;
-    match get_user_configs_impl(npub, &state.db) {
+    match get_user_configs_impl(npub, &state) {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
     }
@@ -285,8 +290,15 @@ pub async fn delete_user_config(
         )
     })?;
 
-    match crate::db::delete_user_config(&state.db, npub, &emoji) {
-        Ok(_) => get_user_configs_impl(npub, &state.db)
+    let mut conn = state.db_pool.get().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Could not get db connection\"}"),
+        )
+    })?;
+
+    match crate::models::delete_user_config(&mut conn, npub, &emoji) {
+        Ok(_) => get_user_configs_impl(npub, &state)
             .map(Json)
             .map_err(handle_anyhow_error),
         Err(e) => Err(handle_anyhow_error(e)),
@@ -304,22 +316,56 @@ pub async fn delete_user_configs(
         )
     })?;
 
-    match crate::db::delete_user(&state.db, npub) {
-        Ok(_) => get_user_configs_impl(npub, &state.db)
+    let mut conn = state.db_pool.get().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Could not get db connection\"}"),
+        )
+    })?;
+
+    match crate::models::delete_user(&mut conn, npub) {
+        Ok(_) => get_user_configs_impl(npub, &state)
             .map(Json)
             .map_err(handle_anyhow_error),
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Counts {
+    users: i64,
+    zap_configs: i64,
+}
+
+pub async fn count_impl(state: &State) -> anyhow::Result<Counts> {
+    let mut conn = state.db_pool.get()?;
+
+    conn.transaction(|conn| {
+        let users = User::get_user_count(conn)?;
+        let zap_configs = ZapConfig::get_config_count(conn)?;
+
+        Ok(Counts { users, zap_configs })
+    })
+}
+
 pub async fn count(
     Extension(state): Extension<State>,
-) -> Result<Json<usize>, (StatusCode, String)> {
-    Ok(Json(state.db.len()))
+) -> Result<Json<Counts>, (StatusCode, String)> {
+    match count_impl(&state).await {
+        Ok(res) => Ok(Json(res)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
 }
 
 pub async fn migrate(Extension(state): Extension<State>) -> Result<Json<()>, (StatusCode, String)> {
-    match crate::db::migrate_jb55_lnurl(&state.db) {
+    let mut conn = state.db_pool.get().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Could not get db connection\"}"),
+        )
+    })?;
+
+    match crate::db::migrate_to_postgres(&state.db, &mut conn) {
         Ok(_) => Ok(Json(())),
         Err(e) => Err(handle_anyhow_error(e)),
     }
@@ -327,11 +373,15 @@ pub async fn migrate(Extension(state): Extension<State>) -> Result<Json<()>, (St
 
 #[cfg(test)]
 mod test {
+    use crate::models::MIGRATIONS;
     use crate::routes::*;
     use crate::State;
     use bitcoin::hashes::hex::ToHex;
     use bitcoin::secp256k1::rand;
     use bitcoin::secp256k1::rand::Rng;
+    use diesel::r2d2::{ConnectionManager, Pool};
+    use diesel::{PgConnection, RunQueryDsl};
+    use diesel_migrations::MigrationHarness;
     use std::sync::{Arc, Mutex};
     use tokio::sync::watch;
 
@@ -348,8 +398,23 @@ mod test {
         format!("/tmp/zapple_pay_{}.sled", rand_string)
     }
 
-    fn init_state(db_name: &str) -> State {
+    fn init_state() -> State {
+        let db_name = gen_tmp_db_name();
         let db = sled::open(db_name).unwrap();
+        let manager = ConnectionManager::<PgConnection>::new(
+            "postgres://username:password@localhost/zapple-pay",
+        );
+        let db_pool = Pool::builder()
+            .max_size(16)
+            .test_on_check_out(true)
+            .build(manager)
+            .expect("Could not build connection pool");
+
+        // run migrations
+        let mut connection = db_pool.get().unwrap();
+        connection
+            .run_pending_migrations(MIGRATIONS)
+            .expect("migrations could not run");
 
         let (tx, _) = watch::channel(vec![]);
         let pubkeys = Arc::new(Mutex::new(tx));
@@ -357,19 +422,30 @@ mod test {
 
         State {
             db,
+            db_pool,
             pubkeys,
             server_keys,
         }
     }
 
-    fn teardown_database(db_name: &str) {
-        std::fs::remove_dir_all(db_name).unwrap();
+    fn clear_database(state: &State) {
+        let conn = &mut state.db_pool.get().unwrap();
+
+        conn.transaction::<_, anyhow::Error, _>(|conn| {
+            diesel::delete(crate::models::schema::zap_events::table).execute(conn)?;
+            diesel::delete(crate::models::schema::donations::table).execute(conn)?;
+            diesel::delete(crate::models::schema::subscription_configs::table).execute(conn)?;
+            diesel::delete(crate::models::schema::zap_configs::table).execute(conn)?;
+            diesel::delete(crate::models::schema::users::table).execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
     }
 
-    #[test]
-    fn test_create_config() {
-        let db_name = gen_tmp_db_name();
-        let state = init_state(&db_name);
+    #[tokio::test]
+    async fn test_create_config() {
+        let state = init_state();
+        clear_database(&state);
 
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
 
@@ -383,7 +459,7 @@ mod test {
 
         let current = set_user_config_impl(payload, &state).unwrap();
 
-        let configs = get_user_configs_impl(npub, &state.db).unwrap();
+        let configs = get_user_configs_impl(npub, &state).unwrap();
 
         assert_eq!(current, configs);
         assert_eq!(configs.len(), 1);
@@ -392,13 +468,13 @@ mod test {
         assert_eq!(configs[0].emoji(), "⚡");
         assert!(configs[0].donations.is_none());
 
-        teardown_database(&db_name);
+        clear_database(&state);
     }
 
-    #[test]
-    fn test_create_config_emojis() {
-        let db_name = gen_tmp_db_name();
-        let state = init_state(&db_name);
+    #[tokio::test]
+    async fn test_create_config_emojis() {
+        let state = init_state();
+        clear_database(&state);
 
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
 
@@ -416,6 +492,6 @@ mod test {
             set_user_config_impl(payload, &state).unwrap();
         }
 
-        teardown_database(&db_name);
+        clear_database(&state);
     }
 }

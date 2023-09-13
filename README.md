@@ -2,6 +2,14 @@
 
 Zapple Pay lets you automatically zap notes based on if you give a ⚡ reaction.
 
+## Build
+
+If you are having trouble building you may need to install `libpq-dev`.
+
+```bash
+sudo apt-get install libpq-dev
+```
+
 ## API
 
 ### Set User

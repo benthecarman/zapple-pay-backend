@@ -1,4 +1,5 @@
-use lnurl::lightning_address::LightningAddress;
+use crate::models;
+use diesel::PgConnection;
 use lnurl::lnurl::LnUrl;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
@@ -38,10 +39,6 @@ impl UserConfig {
         NostrWalletConnectURI::from_str(&self.nwc).unwrap()
     }
 
-    pub fn emoji(&self) -> String {
-        self.emoji.clone().unwrap_or("⚡".to_string())
-    }
-
     pub fn donations(&self) -> Vec<DonationConfig> {
         self.donations.clone().unwrap_or_default()
     }
@@ -53,117 +50,18 @@ pub struct DonationConfig {
     pub lnurl: LnUrl,
 }
 
-fn get_key(npub: XOnlyPublicKey, emoji: &str) -> String {
-    format!("{}:{}", npub, emoji)
-}
-
-pub fn upsert_user(
-    db: &Db,
-    npub: XOnlyPublicKey,
-    emoji: &str,
-    config: UserConfig,
-) -> anyhow::Result<bool> {
-    let key = get_key(npub, emoji);
-    let value = serde_json::to_vec(&config).unwrap();
-    let prev = db.insert(key.as_bytes(), value)?;
-
-    Ok(prev.is_some())
-}
-
-pub fn get_user(
-    db: &Db,
-    npub: XOnlyPublicKey,
-    emoji: &str,
-    retry: bool,
-) -> anyhow::Result<Option<UserConfig>> {
-    let key = get_key(npub, emoji);
-    let value = db.get(key.as_bytes())?;
-
-    match value {
-        Some(value) => {
-            let config = serde_json::from_slice(&value)?;
-            Ok(Some(config))
-        }
-        None => match emoji {
-            "⚡️" => {
-                if retry {
-                    get_user(db, npub, "⚡", false)
-                } else {
-                    Ok(None)
-                }
-            }
-            "⚡" => {
-                if retry {
-                    get_user(db, npub, "⚡️", false)
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => Ok(None),
-        },
-    }
-}
-
-pub fn get_user_configs(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<Vec<UserConfig>> {
-    let value = db.scan_prefix(npub.to_string().as_bytes());
-
-    let mut configs = vec![];
-    for result in value {
-        let (key, value) = result?;
-
-        if let Ok(str) = String::from_utf8(key.to_vec()) {
-            // drop first 64 chars
-            let emoji = &str[65..];
-
-            let mut config: UserConfig = serde_json::from_slice(&value)?;
-            config.emoji = Some(emoji.to_string());
-            configs.push(config);
-        }
-    }
-
-    Ok(configs)
-}
-
-pub fn delete_user_config(db: &Db, npub: XOnlyPublicKey, emoji: &str) -> anyhow::Result<()> {
-    let key = get_key(npub, emoji);
-    db.remove(key.as_bytes())?;
-    Ok(())
-}
-
-pub fn delete_user(db: &Db, npub: XOnlyPublicKey) -> anyhow::Result<()> {
-    let value = db.scan_prefix(npub.to_string().as_bytes());
-
-    for result in value {
-        let (key, _) = result?;
-        db.remove(key)?;
-    }
-
-    Ok(())
-}
-
-pub fn migrate_jb55_lnurl(db: &Db) -> anyhow::Result<()> {
+pub fn migrate_to_postgres(db: &Db, conn: &mut PgConnection) -> anyhow::Result<()> {
     for result in db.iter() {
         let (key, value) = result?;
-        let mut config: UserConfig = serde_json::from_slice(&value)?;
 
-        if config.donations.is_none() {
-            continue;
-        }
+        let str = String::from_utf8(key.to_vec())?;
+        // take first 64 chars
+        let pubkey_str = str.chars().take(64).collect::<String>();
+        let npub = XOnlyPublicKey::from_str(&pubkey_str)?;
+        let emoji = str[65..].to_string();
+        let config: UserConfig = serde_json::from_slice(&value)?;
 
-        for item in config.donations.as_mut().unwrap().iter_mut() {
-            if item.lnurl
-                == LightningAddress::from_str("jb55@sendsats.lol")
-                    .unwrap()
-                    .lnurl()
-            {
-                item.lnurl = LightningAddress::from_str("jb55@getalby.com")
-                    .unwrap()
-                    .lnurl()
-            }
-        }
-
-        let value = serde_json::to_vec(&config)?;
-        db.insert(key, value)?;
+        models::upsert_user(conn, &npub, emoji, config)?;
     }
 
     Ok(())

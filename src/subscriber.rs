@@ -1,6 +1,7 @@
-use crate::db::get_user;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
+use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::PgConnection;
 use futures::future::Either;
 use futures::future::Either::{Left, Right};
 use lightning_invoice::Bolt11Invoice;
@@ -15,7 +16,6 @@ use nostr::prelude::{encrypt, PayInvoiceRequestParams, ToBech32};
 use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde_json::Value;
-use sled::Db;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -24,7 +24,7 @@ use std::time::Duration;
 use tokio::sync::watch::Receiver;
 
 pub async fn start_subscription(
-    db: Db,
+    db_pool: Pool<ConnectionManager<PgConnection>>,
     mut rx: Receiver<Vec<String>>,
     keys: Keys,
 ) -> anyhow::Result<()> {
@@ -66,7 +66,7 @@ pub async fn start_subscription(
                     match notification {
                         RelayPoolNotification::Event(_url, event) => {
                                 tokio::spawn({
-                                    let db = db.clone();
+                                    let db_pool = db_pool.clone();
                                     let client = client.clone();
                                     let lnurl_client = lnurl_client.clone();
                                     let keys = keys.clone();
@@ -74,7 +74,7 @@ pub async fn start_subscription(
                                     let pay_cache = pay_cache.clone();
                                     async move {
                                         let fut = handle_event(
-                                            &db,
+                                            &db_pool,
                                             &client,
                                             &lnurl_client,
                                             event,
@@ -110,7 +110,7 @@ pub async fn start_subscription(
 }
 
 async fn handle_event(
-    db: &Db,
+    db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
     lnurl_client: &BlockingClient,
     event: Event,
@@ -121,7 +121,7 @@ async fn handle_event(
     match event.kind {
         Kind::TextNote | Kind::Reaction => {
             handle_reaction(
-                db,
+                db_pool,
                 client,
                 lnurl_client,
                 event,
@@ -133,7 +133,7 @@ async fn handle_event(
         }
         Kind::Regular(1311) => {
             handle_live_chat(
-                db,
+                db_pool,
                 client,
                 lnurl_client,
                 event,
@@ -149,7 +149,7 @@ async fn handle_event(
 }
 
 async fn handle_live_chat(
-    db: &Db,
+    db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
     lnurl_client: &BlockingClient,
     event: Event,
@@ -204,7 +204,7 @@ async fn handle_live_chat(
         user_key,
         event_id,
         a_tag,
-        db,
+        db_pool,
         client,
         lnurl_client,
         event,
@@ -216,7 +216,7 @@ async fn handle_live_chat(
 }
 
 async fn handle_reaction(
-    db: &Db,
+    db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
     lnurl_client: &BlockingClient,
     event: Event,
@@ -251,7 +251,7 @@ async fn handle_reaction(
         p_tag,
         event_id,
         None,
-        db,
+        db_pool,
         client,
         lnurl_client,
         event,
@@ -266,7 +266,7 @@ async fn pay_user(
     user_key: XOnlyPublicKey,
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
-    db: &Db,
+    db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
     lnurl_client: &BlockingClient,
     event: Event,
@@ -281,13 +281,14 @@ async fn pay_user(
             &event.content
         };
 
-    if let Some(user) = get_user(db, event.pubkey, content, true)? {
+    let mut conn = db_pool.get()?;
+    if let Some(user) = crate::models::get_user_zap_config(&mut conn, event.pubkey, content)? {
         println!(
             "Received reaction: {} {} {}",
             event.id, event.content, event.pubkey
         );
 
-        let nwc = user.nwc();
+        let nwc = user.zap_config.nwc();
 
         let lnurl = {
             let (cache_result, timestamp) = {
@@ -377,23 +378,23 @@ async fn pay_user(
             a_tag,
             lnurl,
             lnurl_client,
-            user.amount_sats * 1_000,
+            user.zap_config.amount_msats(),
             &nwc,
             pay_cache.clone(),
         )
         .await?;
         // pay donations too
         let mut futs = vec![];
-        for donation in user.donations() {
+        for donation in user.donations {
             futs.push(pay_to_lnurl(
                 keys,
                 event.pubkey,
                 None,
                 None,
                 None,
-                donation.lnurl,
+                donation.lnurl(),
                 lnurl_client,
-                donation.amount_sats * 1_000,
+                donation.amount_msats(),
                 &nwc,
                 pay_cache.clone(),
             ));

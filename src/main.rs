@@ -11,6 +11,9 @@ use axum::routing::{get, post};
 use axum::{http, Extension, Router};
 use bitcoin::hashes::hex::ToHex;
 use clap::Parser;
+use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::PgConnection;
+use diesel_migrations::MigrationHarness;
 use nostr::key::{SecretKey, XOnlyPublicKey};
 use nostr::Keys;
 use serde::{Deserialize, Serialize};
@@ -21,16 +24,20 @@ use tokio::sync::watch::Sender;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::*;
+use crate::models::user::User;
+use crate::models::MIGRATIONS;
 use crate::routes::*;
 
 mod config;
 mod db;
+mod models;
 mod routes;
 mod subscriber;
 
 #[derive(Clone)]
 pub struct State {
     db: Db,
+    db_pool: Pool<ConnectionManager<PgConnection>>,
     pubkeys: Arc<Mutex<Sender<Vec<String>>>>,
     pub server_keys: Keys,
 }
@@ -51,6 +58,20 @@ async fn main() -> anyhow::Result<()> {
 
     // DB management
     let db = sled::open(&db_path)?;
+
+    // DB management
+    let manager = ConnectionManager::<PgConnection>::new(&config.pg_url);
+    let db_pool = Pool::builder()
+        .max_size(16)
+        .test_on_check_out(true)
+        .build(manager)
+        .expect("Could not build connection pool");
+
+    // run migrations
+    let mut connection = db_pool.get()?;
+    connection
+        .run_pending_migrations(MIGRATIONS)
+        .expect("migrations could not run");
 
     let keys_path = {
         let mut path = path.clone();
@@ -81,12 +102,23 @@ async fn main() -> anyhow::Result<()> {
         .unwrap();
     });
 
+    let from_db = User::get_all_npubs(&mut connection)?
+        .into_iter()
+        .map(|u| u.to_hex())
+        .collect::<Vec<_>>();
+    drop(connection);
+
+    start.extend(from_db);
+    start.sort();
+    start.dedup();
+
     let (tx, rx) = watch::channel(start);
 
     let tx_shared = Arc::new(Mutex::new(tx));
 
     let state = State {
         db,
+        db_pool,
         pubkeys: tx_shared.clone(),
         server_keys: keys.server_keys(),
     };
@@ -126,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tokio::spawn(subscriber::start_subscription(
-        state.db,
+        state.db_pool,
         rx,
         keys.server_keys(),
     ));

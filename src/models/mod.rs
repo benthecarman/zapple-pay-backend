@@ -1,7 +1,8 @@
 use crate::models::donation::{Donation, NewDonation};
+use crate::models::subscription_config::{NewSubscriptionConfig, SubscriptionConfig};
 use crate::models::user::NewUser;
 use crate::models::zap_config::{NewZapConfig, ZapConfig};
-use crate::routes::SetUserConfig;
+use crate::routes::{CreateUserSubscription, SetUserConfig};
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
@@ -14,6 +15,7 @@ use std::str::FromStr;
 
 pub mod donation;
 pub mod schema;
+pub mod subscription_config;
 pub mod user;
 pub mod zap_config;
 pub mod zap_event;
@@ -56,7 +58,7 @@ pub struct UserZapConfig {
 pub fn upsert_user(
     conn: &mut PgConnection,
     npub: &XOnlyPublicKey,
-    emoji: String,
+    emoji: &str,
     config: SetUserConfig,
 ) -> anyhow::Result<()> {
     conn.transaction::<_, Error, _>(|conn| {
@@ -74,7 +76,7 @@ pub fn upsert_user(
 
         let zap_config = NewZapConfig {
             user_id,
-            emoji: &emoji,
+            emoji,
             amount: config.amount_sats as i32,
             nwc: &config.nwc().to_string(),
         };
@@ -107,6 +109,44 @@ pub fn upsert_user(
                 .values(&donations)
                 .execute(conn)?;
         }
+
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+pub fn upsert_subscription(
+    conn: &mut PgConnection,
+    config: CreateUserSubscription,
+) -> anyhow::Result<()> {
+    conn.transaction::<_, Error, _>(|conn| {
+        let user = NewUser {
+            npub: &config.npub.to_hex(),
+        };
+
+        let user_id: i32 = diesel::insert_into(schema::users::table)
+            .values(&user)
+            .returning(schema::users::id)
+            .on_conflict(schema::users::npub)
+            .do_update()
+            .set(&user)
+            .get_result(conn)?;
+
+        let sub_config = NewSubscriptionConfig {
+            user_id,
+            to_npub: &config.to_npub.to_hex(),
+            amount: config.amount_sats as i32,
+            time_period: &config.time_period.to_string(),
+            nwc: &config.nwc().to_string(),
+        };
+
+        diesel::insert_into(schema::subscription_configs::table)
+            .values(&sub_config)
+            .on_conflict(on_constraint("subscription_configs_user_id_to_npub_unique"))
+            .do_update()
+            .set(&sub_config)
+            .execute(conn)?;
 
         Ok(())
     })?;
@@ -169,7 +209,16 @@ pub fn get_user_zap_configs(
 
 pub fn delete_user(conn: &mut PgConnection, npub: XOnlyPublicKey) -> anyhow::Result<()> {
     conn.transaction(|conn| {
-        use schema::{donations, users, zap_configs};
+        use schema::{donations, subscription_configs, users, zap_configs};
+
+        let user = users::table
+            .filter(users::npub.eq(npub.to_hex()))
+            .first::<user::User>(conn)
+            .optional()?;
+
+        let Some(user) = user else {
+            return Ok(());
+        };
 
         let zap_configs = ZapConfig::get_by_pubkey(conn, &npub)?;
 
@@ -178,10 +227,13 @@ pub fn delete_user(conn: &mut PgConnection, npub: XOnlyPublicKey) -> anyhow::Res
         diesel::delete(donations::table.filter(donations::config_id.eq_any(&zap_config_ids)))
             .execute(conn)?;
 
-        diesel::delete(zap_configs::table.filter(zap_configs::id.eq_any(zap_config_ids)))
+        diesel::delete(zap_configs::table.filter(zap_configs::user_id.eq(user.id)))
             .execute(conn)?;
 
-        // todo delete subscriptions
+        diesel::delete(
+            subscription_configs::table.filter(subscription_configs::user_id.eq(user.id)),
+        )
+        .execute(conn)?;
 
         diesel::delete(users::table.filter(users::npub.eq(npub.to_hex()))).execute(conn)?;
 
@@ -205,6 +257,26 @@ pub fn delete_user_config(
             .execute(conn)?;
 
         diesel::delete(zap_configs::table.filter(zap_configs::id.eq(zap_config.id)))
+            .execute(conn)?;
+
+        Ok(())
+    })
+}
+
+pub fn delete_user_subscription(
+    conn: &mut PgConnection,
+    npub: XOnlyPublicKey,
+    to_npub: XOnlyPublicKey,
+) -> anyhow::Result<()> {
+    conn.transaction(|conn| {
+        use schema::subscription_configs;
+
+        let Some(config) = SubscriptionConfig::get_by_pubkey_and_to_npub(conn, &npub, &to_npub)?
+        else {
+            return Ok(());
+        };
+
+        diesel::delete(subscription_configs::table.filter(subscription_configs::id.eq(config.id)))
             .execute(conn)?;
 
         Ok(())

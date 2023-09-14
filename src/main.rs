@@ -96,11 +96,21 @@ async fn main() -> anyhow::Result<()> {
 
     let server_router = Router::new()
         .route("/set-user", post(set_user_config))
+        .route("/create-subscription", post(create_user_subscription))
+        .route(
+            "/delete-subscription/:npub/:to_npub",
+            get(delete_user_subscription),
+        )
         .route("/delete-user/:npub/:emoji", get(delete_user_config))
         .route("/delete-user/:npub", get(delete_user_configs))
         .route("/count", get(count))
         .route("/get-user/:npub/:emoji", get(get_user_config))
         .route("/get-user/:npub", get(get_user_configs))
+        .route("/get-subscriptions/:npub", get(get_user_subscriptions))
+        .route(
+            "/get-subscriptions/:npub/:to_npub",
+            get(get_user_subscription),
+        )
         .fallback(fallback)
         .layer(Extension(state.clone()))
         .layer(

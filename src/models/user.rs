@@ -2,6 +2,7 @@ use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use super::schema::users;
@@ -48,6 +49,25 @@ impl User {
             .into_iter()
             .map(|npub| XOnlyPublicKey::from_str(&npub).expect("invalid pubkey"))
             .collect::<Vec<_>>();
+
+        Ok(npubs)
+    }
+
+    pub fn get_by_user_ids(
+        conn: &mut PgConnection,
+        user_ids: Vec<i32>,
+    ) -> anyhow::Result<HashMap<i32, XOnlyPublicKey>> {
+        let npubs = users::table
+            .filter(users::id.eq_any(user_ids))
+            .load::<Self>(conn)?
+            .into_iter()
+            .map(|user| {
+                (
+                    user.id,
+                    XOnlyPublicKey::from_str(&user.npub).expect("invalid pubkey"),
+                )
+            })
+            .collect();
 
         Ok(npubs)
     }

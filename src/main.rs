@@ -12,22 +12,26 @@ use clap::Parser;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
 use diesel_migrations::MigrationHarness;
+use lnurl::lnurl::LnUrl;
 use nostr::key::SecretKey;
 use nostr::Keys;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_reader, to_string};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use tokio::sync::watch;
+use std::sync::Arc;
 use tokio::sync::watch::Sender;
+use tokio::sync::{watch, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 
 mod config;
 mod listener;
 mod models;
+mod profile_handler;
 mod routes;
+mod subscription_handler;
 
 #[derive(Clone)]
 pub struct State {
@@ -126,16 +130,29 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60 * 60)).await;
-            let tx = tx_shared.lock().unwrap();
+            let tx = tx_shared.lock().await;
             tx.send_if_modified(|_| true);
         }
     });
 
+    let lnurl_cache = Arc::new(Mutex::new(HashMap::new()));
+    let pay_cache = Arc::new(Mutex::new(HashMap::new()));
+
     tokio::spawn(listener::start_listener(
-        config.relay,
-        state.db_pool,
+        config.relay.clone(),
+        state.db_pool.clone(),
         rx,
         keys.server_keys(),
+        lnurl_cache.clone(),
+        pay_cache.clone(),
+    ));
+
+    tokio::spawn(subscription_handler::start_subscription_handler(
+        keys.server_keys(),
+        config.relay,
+        state.db_pool,
+        lnurl_cache,
+        pay_cache,
     ));
 
     let graceful = server.with_graceful_shutdown(async {
@@ -192,4 +209,12 @@ fn get_keys(path: PathBuf) -> ZapplePayKeys {
             keys
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LnUrlCacheResult {
+    /// Successful result, contains the lnurl and the timestamp we got it
+    LnUrl((LnUrl, u64)),
+    /// Failed result, contains the timestamp of the last metadata event
+    Timestamp(u64),
 }

@@ -1,4 +1,4 @@
-use crate::routes::SubscriptionPeriod;
+use crate::routes::{SubscriptionPeriod, ALL_SUBSCRIPTION_PERIODS};
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
@@ -32,6 +32,7 @@ pub struct SubscriptionConfig {
     time_period: String,
     nwc: String,
     created_at: chrono::NaiveDateTime,
+    pub last_paid: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Insertable, AsChangeset)]
@@ -42,6 +43,7 @@ pub struct NewSubscriptionConfig<'a> {
     pub amount: i32,
     pub time_period: &'a str,
     pub nwc: &'a str,
+    pub last_paid: Option<chrono::NaiveDateTime>,
 }
 
 impl SubscriptionConfig {
@@ -59,6 +61,16 @@ impl SubscriptionConfig {
 
     pub fn amount_msats(&self) -> u64 {
         (self.amount * 1_000) as u64
+    }
+
+    pub fn needs_payment(&self) -> bool {
+        match self.last_paid {
+            None => true,
+            Some(last_paid) => {
+                let period_start = self.time_period().period_start();
+                last_paid < period_start
+            }
+        }
     }
 
     pub fn get_config_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
@@ -91,5 +103,28 @@ impl SubscriptionConfig {
             .select(subscription_configs::all_columns)
             .first::<Self>(conn)
             .optional()?)
+    }
+
+    pub fn get_needs_payment(conn: &mut PgConnection) -> anyhow::Result<Vec<Self>> {
+        conn.transaction(|conn| {
+            // get never never paid configs
+            let mut configs = subscription_configs::table
+                .filter(subscription_configs::last_paid.is_null())
+                .load::<Self>(conn)?;
+
+            for period in ALL_SUBSCRIPTION_PERIODS {
+                let new_configs = subscription_configs::table
+                    .filter(subscription_configs::time_period.eq(period.to_string()))
+                    .filter(subscription_configs::last_paid.lt(period.period_start()))
+                    .load::<Self>(conn)?;
+
+                configs.extend(new_configs);
+            }
+
+            // double check that we don't have any configs that don't need payment
+            configs.retain(|config| config.needs_payment());
+
+            Ok(configs)
+        })
     }
 }

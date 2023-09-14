@@ -139,6 +139,7 @@ pub fn upsert_subscription(
             amount: config.amount_sats as i32,
             time_period: &config.time_period.to_string(),
             nwc: &config.nwc().to_string(),
+            last_paid: None,
         };
 
         diesel::insert_into(schema::subscription_configs::table)

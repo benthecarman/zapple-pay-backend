@@ -18,6 +18,7 @@ diesel::table! {
         time_period -> Text,
         nwc -> Text,
         created_at -> Timestamptz,
+        last_paid -> Nullable<Timestamptz>,
     }
 }
 

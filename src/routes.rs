@@ -5,6 +5,7 @@ use crate::State;
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::{Extension, Json};
+use chrono::{Datelike, Duration, NaiveDateTime, Timelike, Utc};
 use diesel::{Connection, PgConnection};
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
@@ -70,19 +71,59 @@ pub struct DonationConfig {
     pub lnurl: String,
 }
 
+pub const ALL_SUBSCRIPTION_PERIODS: [SubscriptionPeriod; 6] = [
+    SubscriptionPeriod::Minute,
+    SubscriptionPeriod::Hour,
+    SubscriptionPeriod::Day,
+    SubscriptionPeriod::Week,
+    SubscriptionPeriod::Month,
+    SubscriptionPeriod::Year,
+];
+
 /// How often a subscription should pay
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SubscriptionPeriod {
-    /// Pays daily at midnight UTC
+    /// Pays at the top of every minute
+    Minute,
+    /// Pays at the top of every hour
+    Hour,
+    /// Pays daily at midnight
     Day,
-    /// Pays every week on sunday, midnight UTC
+    /// Pays every week on sunday, midnight
     Week,
-    /// Pays every month on the first, midnight UTC
+    /// Pays every month on the first, midnight
     Month,
-    /// Pays every year on the January 1st, midnight UTC
+    /// Pays every year on the January 1st, midnight
     Year,
-    /// Pays every X seconds
-    Seconds(u64),
+}
+
+impl SubscriptionPeriod {
+    pub fn period_start(&self) -> NaiveDateTime {
+        let now = Utc::now();
+        match self {
+            SubscriptionPeriod::Minute => now
+                .date_naive()
+                .and_hms_opt(now.hour(), now.minute(), 0)
+                .unwrap(),
+            SubscriptionPeriod::Hour => now.date_naive().and_hms_opt(now.hour(), 0, 0).unwrap(),
+            SubscriptionPeriod::Day => now.date_naive().and_hms_opt(0, 0, 0).unwrap(),
+            SubscriptionPeriod::Week => (now
+                - Duration::days((now.weekday().num_days_from_sunday()) as i64))
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+            SubscriptionPeriod::Month => now
+                .date_naive()
+                .with_day(1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            SubscriptionPeriod::Year => NaiveDateTime::new(
+                now.date_naive().with_ordinal(1).unwrap(),
+                chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            ),
+        }
+    }
 }
 
 impl Serialize for SubscriptionPeriod {
@@ -101,11 +142,12 @@ impl<'a> Deserialize<'a> for SubscriptionPeriod {
 impl core::fmt::Display for SubscriptionPeriod {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            SubscriptionPeriod::Minute => write!(f, "minute"),
+            SubscriptionPeriod::Hour => write!(f, "hour"),
             SubscriptionPeriod::Day => write!(f, "day"),
             SubscriptionPeriod::Week => write!(f, "week"),
             SubscriptionPeriod::Month => write!(f, "month"),
             SubscriptionPeriod::Year => write!(f, "year"),
-            SubscriptionPeriod::Seconds(s) => write!(f, "{s} seconds"),
         }
     }
 }
@@ -115,16 +157,13 @@ impl FromStr for SubscriptionPeriod {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "minute" => Ok(SubscriptionPeriod::Minute),
+            "hour" => Ok(SubscriptionPeriod::Hour),
             "day" => Ok(SubscriptionPeriod::Day),
             "week" => Ok(SubscriptionPeriod::Week),
             "month" => Ok(SubscriptionPeriod::Month),
             "year" => Ok(SubscriptionPeriod::Year),
-            _ => {
-                let s = s.trim_end_matches(" seconds");
-                s.parse::<u64>()
-                    .map(SubscriptionPeriod::Seconds)
-                    .map_err(|_| anyhow::anyhow!("Invalid SubscriptionPeriod"))
-            }
+            _ => Err(anyhow::anyhow!("Invalid SubscriptionPeriod")),
         }
     }
 }
@@ -152,13 +191,6 @@ impl CreateUserSubscription {
         if self.npub == self.to_npub {
             return Err(anyhow::anyhow!("Cannot subscribe to yourself"));
         }
-
-        match self.time_period {
-            SubscriptionPeriod::Seconds(s) if s < 60 => {
-                Err(anyhow::anyhow!("Must be at least 60 seconds"))
-            }
-            _ => Ok(()),
-        }?;
 
         Ok(())
     }
@@ -218,7 +250,7 @@ async fn send_subscription_dm(
     Ok(())
 }
 
-pub(crate) fn set_user_config_impl(
+pub(crate) async fn set_user_config_impl(
     payload: SetUserConfig,
     state: &State,
 ) -> anyhow::Result<Vec<SetUserConfig>> {
@@ -238,7 +270,7 @@ pub(crate) fn set_user_config_impl(
     let npub_hex = npub.to_hex();
     println!("New user: {npub_hex} {emoji_str} {amt}!");
     // notify new key
-    let keys = state.pubkeys.lock().unwrap();
+    let keys = state.pubkeys.lock().await;
     keys.send_if_modified(|current| {
         if current.contains(&npub_hex) {
             false
@@ -261,7 +293,7 @@ pub async fn set_user_config(
     Extension(state): Extension<State>,
     Json(payload): Json<SetUserConfig>,
 ) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
-    match set_user_config_impl(payload, &state) {
+    match set_user_config_impl(payload, &state).await {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
     }
@@ -283,17 +315,6 @@ pub(crate) fn create_user_subscription_impl(
     let npub_hex = npub.to_hex();
     let to_npub_hex = to_npub.to_hex();
     println!("New subscription: {npub_hex} -> {to_npub_hex} {amt} every {period}!");
-    // notify new key
-    // todo use subscription notifier
-    let keys = state.pubkeys.lock().unwrap();
-    keys.send_if_modified(|current| {
-        if current.contains(&npub_hex) {
-            false
-        } else {
-            current.push(npub_hex);
-            true
-        }
-    });
 
     #[cfg(not(test))]
     {
@@ -625,8 +646,8 @@ mod test {
     use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::{PgConnection, RunQueryDsl};
     use diesel_migrations::MigrationHarness;
-    use std::sync::{Arc, Mutex};
-    use tokio::sync::watch;
+    use std::sync::Arc;
+    use tokio::sync::{watch, Mutex};
 
     const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
     const PUBKEY2: &str = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2";
@@ -688,7 +709,7 @@ mod test {
             donations: None,
         };
 
-        let current = set_user_config_impl(payload, &state).unwrap();
+        let current = set_user_config_impl(payload, &state).await.unwrap();
 
         let configs = get_user_configs_impl(npub, &state).unwrap();
 
@@ -720,7 +741,7 @@ mod test {
                 donations: None,
             };
 
-            set_user_config_impl(payload, &state).unwrap();
+            set_user_config_impl(payload, &state).await.unwrap();
         }
 
         clear_database(&state);
@@ -773,7 +794,7 @@ mod test {
             donations: None,
         };
 
-        let current = set_user_config_impl(payload, &state).unwrap();
+        let current = set_user_config_impl(payload, &state).await.unwrap();
 
         let configs = get_user_configs_impl(npub, &state).unwrap();
 
@@ -805,7 +826,7 @@ mod test {
             npub,
             to_npub,
             amount_sats: 21,
-            time_period: SubscriptionPeriod::Seconds(100),
+            time_period: SubscriptionPeriod::Hour,
             nwc: NWC.to_string(),
         };
 
@@ -819,7 +840,7 @@ mod test {
         assert_eq!(configs[0].npub, npub);
         assert_eq!(configs[0].to_npub, to_npub);
         assert_eq!(configs[0].amount_sats, 21);
-        assert_eq!(configs[0].time_period, SubscriptionPeriod::Seconds(100));
+        assert_eq!(configs[0].time_period, SubscriptionPeriod::Hour);
 
         crate::models::delete_user_subscription(&mut conn, npub, to_npub).unwrap();
 
@@ -868,7 +889,7 @@ mod test {
                 donations: None,
             };
 
-            set_user_config_impl(payload, &state).unwrap();
+            set_user_config_impl(payload, &state).await.unwrap();
         }
 
         crate::models::delete_user(&mut conn, npub).unwrap();

@@ -301,13 +301,23 @@ async fn pay_user(
         // pay donations too
         let mut futs = vec![];
         for donation in user.donations {
+            let (lnurl, to_user) = match donation.lnurl() {
+                Some(lnurl) => (lnurl, None),
+                None => {
+                    let npub = donation.npub().unwrap();
+                    let lnurl = get_user_lnurl(npub, &lnurl_cache, client).await?;
+
+                    (lnurl, Some(npub))
+                }
+            };
+
             futs.push(pay_to_lnurl(
                 keys,
                 event.pubkey,
+                to_user,
                 None,
                 None,
-                None,
-                donation.lnurl(),
+                lnurl,
                 lnurl_client,
                 donation.amount_msats(),
                 nwc.clone(),

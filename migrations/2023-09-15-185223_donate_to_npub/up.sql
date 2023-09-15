@@ -1,0 +1,5 @@
+ALTER TABLE donations
+    ADD COLUMN npub TEXT;
+
+ALTER TABLE donations
+    ALTER COLUMN lnurl DROP NOT NULL;

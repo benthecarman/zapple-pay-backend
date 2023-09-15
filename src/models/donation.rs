@@ -1,5 +1,7 @@
 use super::schema::donations;
 use crate::models::zap_config::ZapConfig;
+use bitcoin::hashes::hex::ToHex;
+use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
 use lnurl::lnurl::LnUrl;
 use serde::{Deserialize, Serialize};
@@ -24,30 +26,46 @@ use std::str::FromStr;
 pub struct Donation {
     pub id: i32,
     pub config_id: i32,
-    pub lnurl: String,
+    pub lnurl: Option<String>,
     pub amount: i32,
+    pub npub: Option<String>,
 }
 
 #[derive(Insertable, AsChangeset)]
 #[diesel(table_name = donations)]
 pub struct NewDonation {
     pub config_id: i32,
-    pub lnurl: String,
+    pub lnurl: Option<String>,
     pub amount: i32,
+    pub npub: Option<String>,
 }
 
 impl Donation {
-    pub fn new(config_id: i32, lnurl: &LnUrl, amount: i32) -> Self {
+    pub fn new(
+        config_id: i32,
+        lnurl: Option<&LnUrl>,
+        npub: Option<XOnlyPublicKey>,
+        amount: i32,
+    ) -> Self {
         Self {
             id: 0,
             config_id,
-            lnurl: lnurl.to_string(),
+            lnurl: lnurl.map(|l| l.to_string()),
             amount,
+            npub: npub.map(|n| n.to_hex()),
         }
     }
 
-    pub fn lnurl(&self) -> LnUrl {
-        LnUrl::from_str(&self.lnurl).expect("invalid lnurl")
+    pub fn lnurl(&self) -> Option<LnUrl> {
+        self.lnurl
+            .as_ref()
+            .map(|l| LnUrl::from_str(l).expect("invalid lnurl"))
+    }
+
+    pub fn npub(&self) -> Option<XOnlyPublicKey> {
+        self.lnurl
+            .as_ref()
+            .map(|l| XOnlyPublicKey::from_str(l).expect("invalid npub"))
     }
 
     pub fn amount_msats(&self) -> u64 {

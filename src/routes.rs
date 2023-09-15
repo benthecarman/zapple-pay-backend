@@ -43,13 +43,12 @@ impl SetUserConfig {
             return Err(anyhow::anyhow!("Invalid nwc"));
         }
 
-        // verify donations have a valid lnurl / lightning address
-        if self.donations.as_ref().map_or(false, |d| {
-            d.iter().any(|donation| {
-                LnUrl::from_str(&donation.lnurl).is_err()
-                    && LightningAddress::from_str(&donation.lnurl).is_err()
-            })
-        }) {
+        // verify donations have a valid lnurl / lightning address / npub
+        if self
+            .donations
+            .as_ref()
+            .map_or(false, |d| d.iter().any(|d| !d.is_valid()))
+        {
             return Err(anyhow::anyhow!("Invalid lnurl in donation"));
         }
 
@@ -68,7 +67,20 @@ impl SetUserConfig {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DonationConfig {
     pub amount_sats: u64,
-    pub lnurl: String,
+    pub lnurl: Option<String>,
+    pub npub: Option<XOnlyPublicKey>,
+}
+
+impl DonationConfig {
+    pub fn is_valid(&self) -> bool {
+        match (self.lnurl.as_ref(), self.npub.as_ref()) {
+            (Some(lnurl), None) => {
+                LnUrl::from_str(lnurl).is_ok() || LightningAddress::from_str(lnurl).is_ok()
+            }
+            (None, Some(_)) => true, // valid by parser
+            _ => false,
+        }
+    }
 }
 
 pub const ALL_SUBSCRIPTION_PERIODS: [SubscriptionPeriod; 6] = [
@@ -348,6 +360,7 @@ pub(crate) fn get_user_config_impl(
                 .into_iter()
                 .map(|donation| DonationConfig {
                     amount_sats: donation.amount as u64,
+                    npub: donation.npub(),
                     lnurl: donation.lnurl,
                 })
                 .collect::<Vec<DonationConfig>>();
@@ -400,7 +413,8 @@ pub(crate) fn get_user_configs_impl(
                     .into_iter()
                     .map(|donation| DonationConfig {
                         amount_sats: donation.amount as u64,
-                        lnurl: donation.lnurl.to_string(),
+                        npub: donation.npub(),
+                        lnurl: donation.lnurl,
                     })
                     .collect::<Vec<DonationConfig>>();
 

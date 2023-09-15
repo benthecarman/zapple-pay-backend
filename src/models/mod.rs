@@ -100,8 +100,9 @@ pub fn upsert_user(
                 .into_iter()
                 .map(|donate_config| NewDonation {
                     config_id,
-                    lnurl: donate_config.lnurl.to_string(),
+                    lnurl: donate_config.lnurl,
                     amount: donate_config.amount_sats as i32,
+                    npub: donate_config.npub.map(|x| x.to_hex()),
                 })
                 .collect::<Vec<_>>();
 

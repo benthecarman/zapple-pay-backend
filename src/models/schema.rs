@@ -4,8 +4,9 @@ diesel::table! {
     donations (id) {
         id -> Int4,
         config_id -> Int4,
-        lnurl -> Text,
+        lnurl -> Nullable<Text>,
         amount -> Int4,
+        npub -> Nullable<Text>,
     }
 }
 

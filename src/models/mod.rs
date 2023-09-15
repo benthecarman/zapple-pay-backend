@@ -164,7 +164,7 @@ pub fn get_user_zap_config(
     // todo could do one query here, currently in two
 
     conn.transaction(|conn| {
-        let Some(zap_config) = ZapConfig::get_by_pubkey_and_emoji(conn, &npub, content) else {
+        let Some(zap_config) = ZapConfig::get_by_pubkey_and_emoji(conn, &npub, content)? else {
             return Ok(None);
         };
 
@@ -251,7 +251,7 @@ pub fn delete_user_config(
     conn.transaction(|conn| {
         use schema::{donations, zap_configs};
 
-        let Some(zap_config) = ZapConfig::get_by_pubkey_and_emoji(conn, &npub, emoji) else {
+        let Some(zap_config) = ZapConfig::get_by_pubkey_and_emoji(conn, &npub, emoji)? else {
             return Ok(());
         };
 

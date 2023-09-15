@@ -72,10 +72,13 @@ impl User {
         Ok(npubs)
     }
 
-    pub fn get_by_pubkey(conn: &mut PgConnection, pubkey: &XOnlyPublicKey) -> Option<Self> {
-        users::table
+    pub fn get_by_pubkey(
+        conn: &mut PgConnection,
+        pubkey: &XOnlyPublicKey,
+    ) -> anyhow::Result<Option<Self>> {
+        Ok(users::table
             .filter(users::npub.eq(pubkey.to_hex()))
             .first::<Self>(conn)
-            .ok()
+            .optional()?)
     }
 }

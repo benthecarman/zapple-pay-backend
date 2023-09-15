@@ -73,7 +73,7 @@ impl ZapConfig {
         conn: &mut PgConnection,
         pubkey: &XOnlyPublicKey,
         emoji: &str,
-    ) -> Option<Self> {
+    ) -> anyhow::Result<Option<Self>> {
         // handle different emoji representations
         let table = match emoji {
             "⚡️" => zap_configs::table
@@ -87,11 +87,11 @@ impl ZapConfig {
                 .or_filter(zap_configs::emoji.eq(emoji)),
         };
 
-        table
+        Ok(table
             .inner_join(users::table)
             .filter(users::npub.eq(pubkey.to_hex()))
             .select(dsl::zap_configs::all_columns())
             .first::<Self>(conn)
-            .ok()
+            .optional()?)
     }
 }

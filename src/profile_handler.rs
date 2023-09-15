@@ -7,7 +7,7 @@ use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::LnUrlResponse::LnUrlPayResponse;
-use lnurl::{BlockingClient, Builder};
+use lnurl::{AsyncClient, Builder};
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{encrypt, PayInvoiceRequestParams, ToBech32};
 use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
@@ -122,7 +122,7 @@ async fn get_invoice_from_lnurl(
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     lnurl: &LnUrl,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     amount_msats: u64,
     pay_cache: &Mutex<HashMap<LnUrl, PayResponse>>,
 ) -> anyhow::Result<Bolt11Invoice> {
@@ -136,15 +136,18 @@ async fn get_invoice_from_lnurl(
             None => {
                 println!("No pay in cache, fetching...");
                 let resp = if lnurl.url.contains(".onion") {
-                    Builder::default()
-                        .proxy("127.0.0.1:9050")
-                        .build_blocking()?
-                        .make_request(&lnurl.url)?
+                    let client = Builder::default().proxy("127.0.0.1:9050").build_async()?;
+                    tokio::time::timeout(Duration::from_secs(30), client.make_request(&lnurl.url))
+                        .await?
                 } else {
-                    lnurl_client.make_request(&lnurl.url)?
+                    tokio::time::timeout(
+                        Duration::from_secs(30),
+                        lnurl_client.make_request(&lnurl.url),
+                    )
+                    .await?
                 };
 
-                if let LnUrlPayResponse(pay) = resp {
+                if let Ok(LnUrlPayResponse(pay)) = resp {
                     // don't cache voltage lnurls, they change everytime
                     if !lnurl.url.contains("vlt.ge") {
                         let mut cache = pay_cache.lock().await;
@@ -181,21 +184,30 @@ async fn get_invoice_from_lnurl(
     };
 
     let invoice = {
-        let res = lnurl_client.get_invoice(
-            &pay,
-            amount_msats,
-            zap_request.as_ref().map(|e| e.as_json()),
-        );
+        let res = {
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                lnurl_client.get_invoice(
+                    &pay,
+                    amount_msats,
+                    zap_request.as_ref().map(|e| e.as_json()),
+                ),
+            )
+            .await?
+        };
 
         match res {
             Ok(inv) => inv.invoice(),
-            Err(_) => lnurl_client
-                .get_invoice(
+            Err(_) => tokio::time::timeout(
+                Duration::from_secs(30),
+                lnurl_client.get_invoice(
                     &pay,
                     amount_msats,
                     zap_request.map(|e| urlencoding::encode(&e.as_json()).to_string()),
-                )?
-                .invoice(),
+                ),
+            )
+            .await??
+            .invoice(),
         }
     };
 
@@ -219,7 +231,7 @@ pub async fn pay_to_lnurl(
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     lnurl: LnUrl,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     amount_msats: u64,
     nwc: NostrWalletConnectURI,
     pay_cache: &Mutex<HashMap<LnUrl, PayResponse>>,

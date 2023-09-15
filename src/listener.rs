@@ -7,7 +7,7 @@ use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
-use lnurl::{BlockingClient, Builder};
+use lnurl::{AsyncClient, Builder};
 use nostr::key::XOnlyPublicKey;
 use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
@@ -27,7 +27,7 @@ pub async fn start_listener(
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     println!("Using relays: {:?}", relays);
-    let lnurl_client = Builder::default().build_blocking()?;
+    let lnurl_client = Builder::default().build_async()?;
 
     loop {
         let client = Client::new(&keys);
@@ -104,7 +104,7 @@ pub async fn start_listener(
 async fn handle_event(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
@@ -143,7 +143,7 @@ async fn handle_event(
 async fn handle_live_chat(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
@@ -210,7 +210,7 @@ async fn handle_live_chat(
 async fn handle_reaction(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
@@ -260,7 +260,7 @@ async fn pay_user(
     a_tag: Option<Tag>,
     db_pool: &Pool<ConnectionManager<PgConnection>>,
     client: &Client,
-    lnurl_client: &BlockingClient,
+    lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,

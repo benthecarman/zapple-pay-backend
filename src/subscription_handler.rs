@@ -25,7 +25,7 @@ pub async fn start_subscription_handler(
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
-    let lnurl_client = Builder::default().build_blocking()?;
+    let lnurl_client = Builder::default().build_async()?;
 
     println!("Starting subscription handler..");
 

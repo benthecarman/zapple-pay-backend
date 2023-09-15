@@ -103,6 +103,7 @@ pub async fn start_subscription_handler(
             let fut = crate::profile_handler::pay_to_lnurl(
                 &keys,
                 *from_user,
+                Some(to_npub),
                 None,
                 None,
                 lnurl,

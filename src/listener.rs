@@ -288,6 +288,7 @@ async fn pay_user(
         pay_to_lnurl(
             keys,
             event.pubkey,
+            Some(user_key),
             event_id,
             a_tag,
             lnurl,
@@ -303,6 +304,7 @@ async fn pay_user(
             futs.push(pay_to_lnurl(
                 keys,
                 event.pubkey,
+                None,
                 None,
                 None,
                 donation.lnurl(),

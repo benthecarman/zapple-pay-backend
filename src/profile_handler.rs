@@ -118,6 +118,7 @@ pub async fn get_user_lnurl(
 async fn get_invoice_from_lnurl(
     keys: &Keys,
     from_user: XOnlyPublicKey,
+    to_user: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     lnurl: &LnUrl,
@@ -157,23 +158,26 @@ async fn get_invoice_from_lnurl(
         }
     };
 
-    let zap_request = {
-        let mut tags = vec![
-            Tag::PubKey(from_user, None),
-            Tag::Amount(amount_msats),
-            Tag::Lnurl(lnurl.to_string()),
-            Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
-        ];
-        if let Some(event_id) = event_id {
-            tags.push(Tag::Event(event_id, None, None));
+    let zap_request = match to_user {
+        None => None,
+        Some(to_user) => {
+            let mut tags = vec![
+                Tag::PubKey(to_user, None),
+                Tag::Amount(amount_msats),
+                Tag::Lnurl(lnurl.to_string()),
+                Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
+            ];
+            if let Some(event_id) = event_id {
+                tags.push(Tag::Event(event_id, None, None));
+            }
+            if let Some(a_tag) = a_tag {
+                tags.push(a_tag);
+            }
+            let content = format!("From: nostr:{}", from_user.to_bech32().unwrap());
+            EventBuilder::new(Kind::ZapRequest, content, &tags)
+                .to_event(keys)
+                .ok()
         }
-        if let Some(a_tag) = a_tag {
-            tags.push(a_tag);
-        }
-        let content = format!("From: nostr:{}", from_user.to_bech32().unwrap());
-        EventBuilder::new(Kind::ZapRequest, content, &tags)
-            .to_event(keys)
-            .ok()
     };
 
     let invoice = {
@@ -211,6 +215,7 @@ async fn get_invoice_from_lnurl(
 pub async fn pay_to_lnurl(
     keys: &Keys,
     from_user: XOnlyPublicKey,
+    to_user: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     lnurl: LnUrl,
@@ -222,6 +227,7 @@ pub async fn pay_to_lnurl(
     let invoice = match get_invoice_from_lnurl(
         keys,
         from_user,
+        to_user,
         event_id,
         a_tag,
         &lnurl,

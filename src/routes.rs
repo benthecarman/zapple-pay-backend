@@ -1,6 +1,7 @@
 use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
 use crate::models::zap_config::ZapConfig;
+use crate::models::zap_event::ZapEvent;
 use crate::State;
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -630,6 +631,8 @@ pub async fn delete_user_subscription(
 pub struct Counts {
     users: i64,
     zap_configs: i64,
+    subscription_configs: i64,
+    zap_count: i64,
 }
 
 pub async fn count_impl(state: &State) -> anyhow::Result<Counts> {
@@ -638,8 +641,15 @@ pub async fn count_impl(state: &State) -> anyhow::Result<Counts> {
     conn.transaction(|conn| {
         let users = User::get_user_count(conn)?;
         let zap_configs = ZapConfig::get_config_count(conn)?;
+        let subscription_configs = SubscriptionConfig::get_config_count(conn)?;
+        let zap_count = ZapEvent::get_zap_count(conn)?;
 
-        Ok(Counts { users, zap_configs })
+        Ok(Counts {
+            users,
+            zap_configs,
+            subscription_configs,
+            zap_count,
+        })
     })
 }
 

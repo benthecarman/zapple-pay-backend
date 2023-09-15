@@ -138,26 +138,41 @@ async fn main() -> anyhow::Result<()> {
     let lnurl_cache = Arc::new(Mutex::new(HashMap::new()));
     let pay_cache = Arc::new(Mutex::new(HashMap::new()));
 
-    tokio::spawn(listener::start_listener(
-        config.relay.clone(),
-        state.db_pool.clone(),
-        rx,
-        keys.server_keys(),
-        lnurl_cache.clone(),
-        pay_cache.clone(),
-    ));
+    let relays = config.relay.clone();
+    let db_pool = state.db_pool.clone();
+    let server_keys = keys.server_keys();
+    let l_cache = lnurl_cache.clone();
+    let p_cache = pay_cache.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = listener::start_listener(
+                relays.clone(),
+                db_pool.clone(),
+                rx.clone(),
+                server_keys.clone(),
+                l_cache.clone(),
+                p_cache.clone(),
+            )
+            .await
+            {
+                eprintln!("listener error: {e}")
+            }
+        }
+    });
 
     tokio::spawn(async move {
-        if let Err(e) = subscription_handler::start_subscription_handler(
-            keys.server_keys(),
-            config.relay,
-            state.db_pool,
-            lnurl_cache,
-            pay_cache,
-        )
-        .await
-        {
-            eprintln!("subscription handler error: {e}")
+        loop {
+            if let Err(e) = subscription_handler::start_subscription_handler(
+                keys.server_keys(),
+                config.relay.clone(),
+                state.db_pool.clone(),
+                lnurl_cache.clone(),
+                pay_cache.clone(),
+            )
+            .await
+            {
+                eprintln!("subscription handler error: {e}")
+            }
         }
     });
 

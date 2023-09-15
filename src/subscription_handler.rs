@@ -30,7 +30,7 @@ pub async fn start_subscription_handler(
     println!("Starting subscription handler..");
 
     loop {
-        let start = Utc::now().naive_utc();
+        let start = Utc::now();
         let mut conn = db_pool.get()?;
 
         let (subscriptions, user_keys) = conn.transaction::<_, anyhow::Error, _>(|conn| {
@@ -137,7 +137,7 @@ pub async fn start_subscription_handler(
         let mut conn = db_pool.get()?;
         conn.transaction::<_, anyhow::Error, _>(|conn| {
             for mut sub in successful {
-                sub.last_paid = Some(start);
+                sub.last_paid = Some(start.naive_local());
 
                 let from_user = user_keys.get(&sub.user_id).unwrap();
                 let to_npub = sub.to_npub();

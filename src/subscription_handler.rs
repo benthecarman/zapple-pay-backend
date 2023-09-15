@@ -139,7 +139,7 @@ pub async fn start_subscription_handler(
             for sub in successful.iter() {
                 let from_user = user_keys.get(&sub.user_id).unwrap();
                 let to_npub = sub.to_npub();
-                // create zap event
+                // save to db
                 ZapEvent::create_zap_event(
                     conn,
                     from_user,

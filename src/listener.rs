@@ -326,7 +326,7 @@ async fn pay_user(
         }
         futures::future::join_all(futs).await;
 
-        // create zap event
+        // save to db
         ZapEvent::create_zap_event(
             &mut conn,
             &user_key,
@@ -339,7 +339,7 @@ async fn pay_user(
 
         // if we truncated, add ...
         let err = if content != truncated {
-            anyhow!("Config not found: {} {}...", event.pubkey, truncated)
+            anyhow!("Config not found: {} {}…", event.pubkey, truncated)
         } else {
             anyhow!("Config not found: {} {}", event.pubkey, truncated)
         };

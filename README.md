@@ -1,6 +1,7 @@
 # Zapple Pay
 
-Zapple Pay lets you automatically zap notes based on if you give a ⚡ reaction.
+Zapple Pay lets you use nostr wallet connect to automatically zap notes based on a configured emoji or to subscribe to a
+user and zap them on a regular basis.
 
 ## Build
 
@@ -29,7 +30,8 @@ the emoji and donations are optional
   "donations": [
     {
       "amount_sats": 1000,
-      "lnurl": "donation lnurl"
+      "lnurl": "donation lnurl",
+      "npub": "donation npub"
     }
   ]
 }
@@ -39,19 +41,58 @@ returns:
 the user's current configs
 
 ```json
-[
-  {
-    "npub": "user's npub",
-    "amount_sats": 1000,
-    "emoji": "⚡",
-    "donations": [
+{
+    "zaps" :[
       {
+        "npub": "user's npub",
         "amount_sats": 1000,
-        "lnurl": "donation lnurl"
+        "emoji": "⚡",
+        "donations": [
+          {
+            "amount_sats": 1000,
+            "lnurl": "donation lnurl",
+            "npub": "donation npub"
+          }
+        ]
       }
-    ]
-  }
-]
+    ],
+  "subscriptions": []
+}
+```
+
+### Create Subscription
+
+`POST /create-subscription`
+
+time_period can be `minute`, `hour`, `day`, `week`, `month`, or `year`
+
+payload:
+
+```json
+{
+  "npub": "user's npub",
+  "to_npub": "user to zap npub",
+  "amount_sats": 1000,
+  "time_period": "day",
+  "nwc": "user's nwc"
+}
+```
+
+returns:
+the user's current configs
+
+```json
+{
+  "zaps": [],
+  "subscriptions": [
+    {
+      "npub": "user's npub",
+      "to_npub": "user to zap npub",
+      "amount_sats": 1000,
+      "time_period": "day"
+    }
+  ]
+}
 ```
 
 ### Get User
@@ -62,22 +103,33 @@ returns:
 the user's current configs
 
 ```json
-[
-  {
-    "npub": "user's npub",
-    "amount_sats": 1000,
-    "emoji": "⚡",
-    "donations": [
-      {
-        "amount_sats": 1000,
-        "lnurl": "donation lnurl"
-      }
-    ]
-  }
-]
+{
+  "zaps": [
+    {
+      "npub": "user's npub",
+      "amount_sats": 1000,
+      "emoji": "⚡",
+      "donations": [
+        {
+          "amount_sats": 1000,
+          "lnurl": "donation lnurl",
+          "npub": "donation npub"
+        }
+      ]
+    }
+  ],
+  "subscriptions": [
+    {
+      "npub": "user's npub",
+      "to_npub": "user to zap npub",
+      "amount_sats": 1000,
+      "time_period": "day"
+    }
+  ]
+}
 ```
 
-### Get User
+### Get User Zap Config
 
 `GET /get-user/:npub/:emoji`
 
@@ -85,14 +137,67 @@ returns:
 the user's current config
 
 ```json
-  {
+{
   "npub": "user's npub",
   "amount_sats": 1000,
   "emoji": "⚡",
   "donations": [
     {
       "amount_sats": 1000,
-      "lnurl": "donation lnurl"
+      "lnurl": "donation lnurl",
+      "npub": "donation npub"
+    }
+  ]
+}
+```
+
+### Get User Subscription
+
+`GET /get-subscriptions/:npub/:to_npub`
+
+returns:
+the user's current subscription config for `to_npub`
+
+```json
+{
+  "npub": "user's npub",
+  "to_npub": "user to zap npub",
+  "amount_sats": 1000,
+  "time_period": "day"
+}
+```
+
+### Delete User
+
+`GET /delete-user/:npub`
+
+deletes all the user's zap configs and subscriptions
+
+returns:
+the user's current configs
+
+```json
+{
+  "zaps": [
+    {
+      "npub": "user's npub",
+      "amount_sats": 1000,
+      "emoji": "⚡",
+      "donations": [
+        {
+          "amount_sats": 1000,
+          "lnurl": "donation lnurl",
+          "npub": "donation npub"
+        }
+      ]
+    }
+  ],
+  "subscriptions": [
+    {
+      "npub": "user's npub",
+      "to_npub": "user to zap npub",
+      "amount_sats": 1000,
+      "time_period": "day"
     }
   ]
 }
@@ -106,17 +211,45 @@ returns:
 the user's current configs
 
 ```json
-[
-  {
-    "npub": "user's npub",
-    "amount_sats": 1000,
-    "emoji": "⚡",
-    "donations": [
-      {
-        "amount_sats": 1000,
-        "lnurl": "donation lnurl"
-      }
-    ]
-  }
-]
+{
+  "zaps": [
+    {
+      "npub": "user's npub",
+      "amount_sats": 1000,
+      "emoji": "⚡",
+      "donations": [
+        {
+          "amount_sats": 1000,
+          "lnurl": "donation lnurl",
+          "npub": "donation npub"
+        }
+      ]
+    }
+  ],
+  "subscriptions": [
+    {
+      "npub": "user's npub",
+      "to_npub": "user to zap npub",
+      "amount_sats": 1000,
+      "time_period": "day"
+    }
+  ]
+}
+```
+
+### Counts
+
+`GET /count`
+
+returns:
+metrics on zapple pay
+
+```json
+{
+  "users": 426,
+  "zap_configs": 572,
+  "subscription_configs": 2,
+  "zap_count": 4909,
+  "zap_total": 213485
+}
 ```

@@ -26,6 +26,12 @@ pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UserConfigs {
+    zaps: Vec<SetUserConfig>,
+    subscriptions: Vec<CreateUserSubscription>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SetUserConfig {
     pub npub: XOnlyPublicKey,
     pub amount_sats: u64,
@@ -330,7 +336,7 @@ async fn send_deleted_user_dm(keys: Keys, npub: XOnlyPublicKey) -> anyhow::Resul
 pub(crate) async fn set_user_config_impl(
     payload: SetUserConfig,
     state: &State,
-) -> anyhow::Result<Vec<SetUserConfig>> {
+) -> anyhow::Result<UserConfigs> {
     payload.verify()?;
 
     let emoji_str = payload.emoji().trim().to_string();
@@ -369,7 +375,7 @@ pub(crate) async fn set_user_config_impl(
 pub async fn set_user_config(
     Extension(state): Extension<State>,
     Json(payload): Json<SetUserConfig>,
-) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
+) -> Result<Json<UserConfigs>, (StatusCode, String)> {
     match set_user_config_impl(payload, &state).await {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
@@ -379,7 +385,7 @@ pub async fn set_user_config(
 pub(crate) fn create_user_subscription_impl(
     payload: CreateUserSubscription,
     state: &State,
-) -> anyhow::Result<Vec<CreateUserSubscription>> {
+) -> anyhow::Result<UserConfigs> {
     payload.verify()?;
 
     let npub = payload.npub;
@@ -399,13 +405,13 @@ pub(crate) fn create_user_subscription_impl(
         tokio::spawn(send_subscription_dm(keys, npub, to_npub, period, amt));
     }
 
-    get_user_subscriptions_impl(&mut conn, npub)
+    get_user_configs_impl(npub, state)
 }
 
 pub async fn create_user_subscription(
     Extension(state): Extension<State>,
     Json(payload): Json<CreateUserSubscription>,
-) -> Result<Json<Vec<CreateUserSubscription>>, (StatusCode, String)> {
+) -> Result<Json<UserConfigs>, (StatusCode, String)> {
     match create_user_subscription_impl(payload, &state) {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
@@ -467,9 +473,9 @@ pub async fn get_user_config(
 pub(crate) fn get_user_configs_impl(
     npub: XOnlyPublicKey,
     state: &State,
-) -> anyhow::Result<Vec<SetUserConfig>> {
+) -> anyhow::Result<UserConfigs> {
     let mut conn = state.db_pool.get()?;
-    crate::models::get_user_zap_configs(&mut conn, npub).map(|configs| {
+    let zaps = crate::models::get_user_zap_configs(&mut conn, npub).map(|configs| {
         configs
             .into_iter()
             .map(|user| {
@@ -498,13 +504,29 @@ pub(crate) fn get_user_configs_impl(
                 }
             })
             .collect()
+    })?;
+
+    let subscriptions = SubscriptionConfig::get_by_pubkey(&mut conn, &npub)?
+        .into_iter()
+        .map(|c| CreateUserSubscription {
+            npub,
+            to_npub: c.to_npub(),
+            amount_sats: c.amount as u64,
+            time_period: c.time_period(),
+            nwc: "".to_string(),
+        })
+        .collect();
+
+    Ok(UserConfigs {
+        zaps,
+        subscriptions,
     })
 }
 
 pub async fn get_user_configs(
     Path(npub): Path<String>,
     Extension(state): Extension<State>,
-) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
+) -> Result<Json<UserConfigs>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -610,7 +632,7 @@ pub async fn get_user_subscription(
 pub async fn delete_user_config(
     Path((npub, emoji)): Path<(String, String)>,
     Extension(state): Extension<State>,
-) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
+) -> Result<Json<UserConfigs>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -644,7 +666,7 @@ pub async fn delete_user_config(
 pub async fn delete_user_configs(
     Path(npub): Path<String>,
     Extension(state): Extension<State>,
-) -> Result<Json<Vec<SetUserConfig>>, (StatusCode, String)> {
+) -> Result<Json<UserConfigs>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -878,8 +900,9 @@ mod test {
         let current = set_user_config_impl(payload, &state).await.unwrap();
 
         let configs = get_user_configs_impl(npub, &state).unwrap();
+        let configs = configs.zaps;
 
-        assert_eq!(current, configs);
+        assert_eq!(current.zaps, configs);
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].npub, npub);
         assert_eq!(configs[0].amount_sats, 21);
@@ -934,7 +957,7 @@ mod test {
         let mut conn = state.db_pool.get().unwrap();
         let configs = get_user_subscriptions_impl(&mut conn, npub).unwrap();
 
-        assert_eq!(current, configs);
+        assert_eq!(current.subscriptions, configs);
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].npub, npub);
         assert_eq!(configs[0].to_npub, to_npub);
@@ -963,8 +986,9 @@ mod test {
         let current = set_user_config_impl(payload, &state).await.unwrap();
 
         let configs = get_user_configs_impl(npub, &state).unwrap();
+        let configs = configs.zaps;
 
-        assert_eq!(current, configs);
+        assert_eq!(current.zaps, configs);
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].npub, npub);
         assert_eq!(configs[0].amount_sats, 21);
@@ -975,7 +999,7 @@ mod test {
         crate::models::delete_user_config(&mut conn, npub, emoji).unwrap();
 
         let configs = get_user_configs_impl(npub, &state).unwrap();
-        assert_eq!(configs.len(), 0);
+        assert_eq!(configs.zaps.len(), 0);
 
         clear_database(&state);
     }
@@ -1001,7 +1025,7 @@ mod test {
         let mut conn = state.db_pool.get().unwrap();
         let configs = get_user_subscriptions_impl(&mut conn, npub).unwrap();
 
-        assert_eq!(current, configs);
+        assert_eq!(current.subscriptions, configs);
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].npub, npub);
         assert_eq!(configs[0].to_npub, to_npub);
@@ -1037,7 +1061,7 @@ mod test {
         let mut conn = state.db_pool.get().unwrap();
         let configs = get_user_subscriptions_impl(&mut conn, npub).unwrap();
 
-        assert_eq!(current, configs);
+        assert_eq!(current.subscriptions, configs);
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].npub, npub);
         assert_eq!(configs[0].to_npub, to_npub);
@@ -1060,11 +1084,9 @@ mod test {
 
         crate::models::delete_user(&mut conn, npub).unwrap();
 
-        let subs = get_user_subscriptions_impl(&mut conn, npub).unwrap();
-        assert_eq!(subs.len(), 0);
-
         let configs = get_user_configs_impl(npub, &state).unwrap();
-        assert_eq!(configs.len(), 0);
+        assert_eq!(configs.zaps.len(), 0);
+        assert_eq!(configs.subscriptions.len(), 0);
 
         clear_database(&state);
     }

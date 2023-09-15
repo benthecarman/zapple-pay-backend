@@ -63,7 +63,7 @@ impl Donation {
     }
 
     pub fn npub(&self) -> Option<XOnlyPublicKey> {
-        self.lnurl
+        self.npub
             .as_ref()
             .map(|l| XOnlyPublicKey::from_str(l).expect("invalid npub"))
     }

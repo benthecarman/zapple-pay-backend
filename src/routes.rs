@@ -1,3 +1,4 @@
+use crate::models::schema;
 use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
 use crate::models::zap_config::ZapConfig;
@@ -7,7 +8,7 @@ use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use chrono::{Datelike, Duration, NaiveDateTime, Timelike, Utc};
-use diesel::{Connection, PgConnection};
+use diesel::{Connection, ExpressionMethods, PgConnection, RunQueryDsl};
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use nostr::hashes::hex::ToHex;
@@ -747,6 +748,57 @@ pub async fn count(
     Extension(state): Extension<State>,
 ) -> Result<Json<Counts>, (StatusCode, String)> {
     match count_impl(&state).await {
+        Ok(res) => Ok(Json(res)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
+pub async fn migrate_impl(state: &State) -> anyhow::Result<()> {
+    let mut conn = state.db_pool.get()?;
+
+    conn.transaction(|conn| {
+        // update jb55
+        diesel::update(schema::donations::table)
+            .filter(schema::donations::lnurl.eq(
+                "lnurl1dp68gurn8ghj7em9w3skccne9e3k7mf09emk2mrv944kummhdchkcmn4wfk8qtm2vg6n2fjr92l",
+            ))
+            .set(schema::donations::npub.eq(Some(
+                "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245".to_string(),
+            )))
+            .execute(conn)?;
+
+        // set lnurl to none for old jb55s
+        diesel::update(schema::donations::table)
+            .filter(schema::donations::lnurl.eq(
+                "lnurl1dp68gurn8ghj7em9w3skccne9e3k7mf09emk2mrv944kummhdchkcmn4wfk8qtm2vg6n2fjr92l",
+            ))
+            .set(schema::donations::lnurl.eq(None::<String>))
+            .execute(conn)?;
+
+        // update open sats
+        diesel::update(schema::donations::table)
+            .filter(schema::donations::lnurl.eq(
+                "lnurl1dp68gurn8ghj7anvwshxwef09emk2mrv944kummhdchkcmn4wfk8qtm0wpjkuumpw3esjd9qh2",
+            ))
+            .set(schema::donations::npub.eq(Some(
+                "787338757fc25d65cd929394d5e7713cf43638e8d259e8dcf5c73b834eb851f2".to_string(),
+            )))
+            .execute(conn)?;
+
+        // set lnurl to none for old open sats
+        diesel::update(schema::donations::table)
+            .filter(schema::donations::lnurl.eq(
+                "lnurl1dp68gurn8ghj7anvwshxwef09emk2mrv944kummhdchkcmn4wfk8qtm0wpjkuumpw3esjd9qh2",
+            ))
+            .set(schema::donations::lnurl.eq(None::<String>))
+            .execute(conn)?;
+
+        Ok(())
+    })
+}
+
+pub async fn migrate(Extension(state): Extension<State>) -> Result<Json<()>, (StatusCode, String)> {
+    match migrate_impl(&state).await {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
     }

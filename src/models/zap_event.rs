@@ -1,6 +1,7 @@
 use crate::models::ConfigType;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
+use diesel::dsl::sum;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -51,6 +52,14 @@ impl ZapEvent {
     pub fn get_zap_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
         let count = zap_events::table.count().get_result(conn)?;
         Ok(count)
+    }
+
+    pub fn get_zap_total(conn: &mut PgConnection) -> anyhow::Result<i64> {
+        let total: Option<i64> = zap_events::table
+            .select(sum(zap_events::amount))
+            .get_result(conn)?;
+
+        Ok(total.unwrap_or_default())
     }
 
     pub fn create_zap_event(

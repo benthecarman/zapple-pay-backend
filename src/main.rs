@@ -147,13 +147,19 @@ async fn main() -> anyhow::Result<()> {
         pay_cache.clone(),
     ));
 
-    tokio::spawn(subscription_handler::start_subscription_handler(
-        keys.server_keys(),
-        config.relay,
-        state.db_pool,
-        lnurl_cache,
-        pay_cache,
-    ));
+    tokio::spawn(async move {
+        if let Err(e) = subscription_handler::start_subscription_handler(
+            keys.server_keys(),
+            config.relay,
+            state.db_pool,
+            lnurl_cache,
+            pay_cache,
+        )
+        .await
+        {
+            eprintln!("subscription handler error: {e}")
+        }
+    });
 
     let graceful = server.with_graceful_shutdown(async {
         tokio::signal::ctrl_c()

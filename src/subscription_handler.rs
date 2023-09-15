@@ -119,7 +119,7 @@ pub async fn start_subscription_handler(
         let successful: Vec<SubscriptionConfig> = futures::future::join_all(futs)
             .await
             .into_iter()
-            .filter_map(|res| res)
+            .flatten()
             .collect();
         let num_successful = successful.len();
         let num_failed = total - num_successful;

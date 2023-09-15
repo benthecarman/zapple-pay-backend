@@ -111,11 +111,15 @@ pub async fn start_subscription_handler(
                 nwc,
                 &pay_cache,
             )
-            .map(|_| sub);
+            .map(|res| res.ok().map(|_| sub));
 
             futs.push(fut);
         }
-        let successful: Vec<SubscriptionConfig> = futures::future::join_all(futs).await;
+        let successful: Vec<SubscriptionConfig> = futures::future::join_all(futs)
+            .await
+            .into_iter()
+            .filter_map(|res| res)
+            .collect();
         let num_successful = successful.len();
         let num_failed = total - num_successful;
 

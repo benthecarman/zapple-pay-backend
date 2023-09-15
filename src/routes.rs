@@ -263,6 +263,69 @@ async fn send_subscription_dm(
     Ok(())
 }
 
+#[cfg(not(test))]
+async fn send_deleted_config_dm(
+    keys: Keys,
+    npub: XOnlyPublicKey,
+    emoji: String,
+) -> anyhow::Result<()> {
+    let client = nostr_sdk::Client::new(&keys);
+    client
+        .add_relay("wss://nostr.mutinywallet.com", None)
+        .await?;
+    client.connect().await;
+
+    let content =
+        format!("You have deleted your Zapple Pay config for reactions with a {emoji} emoji!");
+
+    let event_id = client.send_direct_msg(npub, content, None).await?;
+    println!("Sent DM: {event_id}");
+    client.disconnect().await?;
+
+    Ok(())
+}
+
+#[cfg(not(test))]
+async fn send_deleted_subscription_dm(
+    keys: Keys,
+    npub: XOnlyPublicKey,
+    to_npub: XOnlyPublicKey,
+) -> anyhow::Result<()> {
+    let client = nostr_sdk::Client::new(&keys);
+    client
+        .add_relay("wss://nostr.mutinywallet.com", None)
+        .await?;
+    client.connect().await;
+
+    let content = format!(
+        "You have canceled your subscription to {}",
+        to_npub.to_bech32().expect("bech32")
+    );
+
+    let event_id = client.send_direct_msg(npub, content, None).await?;
+    println!("Sent DM: {event_id}");
+    client.disconnect().await?;
+
+    Ok(())
+}
+
+#[cfg(not(test))]
+async fn send_deleted_user_dm(keys: Keys, npub: XOnlyPublicKey) -> anyhow::Result<()> {
+    let client = nostr_sdk::Client::new(&keys);
+    client
+        .add_relay("wss://nostr.mutinywallet.com", None)
+        .await?;
+    client.connect().await;
+
+    let content = String::from("You have deleted your Zapple Pay account.");
+
+    let event_id = client.send_direct_msg(npub, content, None).await?;
+    println!("Sent DM: {event_id}");
+    client.disconnect().await?;
+
+    Ok(())
+}
+
 pub(crate) async fn set_user_config_impl(
     payload: SetUserConfig,
     state: &State,
@@ -562,9 +625,17 @@ pub async fn delete_user_config(
     })?;
 
     match crate::models::delete_user_config(&mut conn, npub, &emoji) {
-        Ok(_) => get_user_configs_impl(npub, &state)
-            .map(Json)
-            .map_err(handle_anyhow_error),
+        Ok(_) => {
+            #[cfg(not(test))]
+            {
+                let keys = state.server_keys.clone();
+                tokio::spawn(send_deleted_config_dm(keys, npub, emoji));
+            }
+
+            get_user_configs_impl(npub, &state)
+                .map(Json)
+                .map_err(handle_anyhow_error)
+        }
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }
@@ -588,9 +659,17 @@ pub async fn delete_user_configs(
     })?;
 
     match crate::models::delete_user(&mut conn, npub) {
-        Ok(_) => get_user_configs_impl(npub, &state)
-            .map(Json)
-            .map_err(handle_anyhow_error),
+        Ok(_) => {
+            #[cfg(not(test))]
+            {
+                let keys = state.server_keys.clone();
+                tokio::spawn(send_deleted_user_dm(keys, npub));
+            }
+
+            get_user_configs_impl(npub, &state)
+                .map(Json)
+                .map_err(handle_anyhow_error)
+        }
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }
@@ -620,9 +699,17 @@ pub async fn delete_user_subscription(
     })?;
 
     match crate::models::delete_user_subscription(&mut conn, npub, to_npub) {
-        Ok(_) => get_user_subscriptions_impl(&mut conn, npub)
-            .map(Json)
-            .map_err(handle_anyhow_error),
+        Ok(_) => {
+            #[cfg(not(test))]
+            {
+                let keys = state.server_keys.clone();
+                tokio::spawn(send_deleted_subscription_dm(keys, npub, to_npub));
+            }
+
+            get_user_subscriptions_impl(&mut conn, npub)
+                .map(Json)
+                .map_err(handle_anyhow_error)
+        }
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }

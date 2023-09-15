@@ -6,7 +6,7 @@ use crate::LnUrlCacheResult;
 use bitcoin::XOnlyPublicKey;
 use chrono::{Timelike, Utc};
 use diesel::r2d2::{ConnectionManager, Pool};
-use diesel::{Connection, PgConnection, RunQueryDsl};
+use diesel::{Connection, ExpressionMethods, PgConnection, RunQueryDsl};
 use futures::future::FutureExt;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
@@ -136,9 +136,7 @@ pub async fn start_subscription_handler(
         // save zap events and update last_paid
         let mut conn = db_pool.get()?;
         conn.transaction::<_, anyhow::Error, _>(|conn| {
-            for mut sub in successful {
-                sub.last_paid = Some(start.naive_local());
-
+            for sub in successful.iter() {
                 let from_user = user_keys.get(&sub.user_id).unwrap();
                 let to_npub = sub.to_npub();
                 // create zap event
@@ -149,12 +147,16 @@ pub async fn start_subscription_handler(
                     ConfigType::Subscription,
                     sub.amount,
                 )?;
-
-                // update last_paid
-                diesel::update(schema::subscription_configs::table)
-                    .set(sub)
-                    .execute(conn)?;
             }
+
+            // update last_paid
+            diesel::update(schema::subscription_configs::table)
+                .filter(
+                    schema::subscription_configs::id
+                        .eq_any(successful.iter().map(|sub| sub.id).collect::<Vec<i32>>()),
+                )
+                .set(schema::subscription_configs::last_paid.eq(Some(start.naive_local())))
+                .execute(conn)?;
 
             Ok(())
         })?;

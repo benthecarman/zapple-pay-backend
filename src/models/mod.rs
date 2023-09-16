@@ -55,15 +55,10 @@ pub struct UserZapConfig {
     pub donations: Vec<Donation>,
 }
 
-pub fn upsert_user(
-    conn: &mut PgConnection,
-    npub: &XOnlyPublicKey,
-    emoji: &str,
-    config: SetUserConfig,
-) -> anyhow::Result<()> {
+pub fn upsert_user(conn: &mut PgConnection, config: SetUserConfig) -> anyhow::Result<()> {
     conn.transaction::<_, Error, _>(|conn| {
         let user = NewUser {
-            npub: &npub.to_hex(),
+            npub: &config.npub.to_hex(),
         };
 
         let user_id: i32 = diesel::insert_into(schema::users::table)
@@ -76,7 +71,7 @@ pub fn upsert_user(
 
         let zap_config = NewZapConfig {
             user_id,
-            emoji,
+            emoji: &config.emoji(),
             amount: config.amount_sats as i32,
             nwc: &config.nwc().to_string(),
         };

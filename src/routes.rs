@@ -348,7 +348,7 @@ pub(crate) async fn set_user_config_impl(
     let npub = payload.npub;
     let amt = payload.amount_sats;
     let mut conn = state.db_pool.get()?;
-    crate::models::upsert_user(&mut conn, &npub, &emoji_str, payload)?;
+    crate::models::upsert_user(&mut conn, payload)?;
 
     let npub_hex = npub.to_hex();
     println!("New user: {npub_hex} {emoji_str} {amt}!");

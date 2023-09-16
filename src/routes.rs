@@ -700,7 +700,7 @@ pub async fn delete_user_configs(
 pub async fn delete_user_subscription(
     Path((npub, to_npub)): Path<(String, String)>,
     Extension(state): Extension<State>,
-) -> Result<Json<Vec<CreateUserSubscription>>, (StatusCode, String)> {
+) -> Result<Json<UserConfigs>, (StatusCode, String)> {
     let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -729,7 +729,7 @@ pub async fn delete_user_subscription(
                 tokio::spawn(send_deleted_subscription_dm(keys, npub, to_npub));
             }
 
-            get_user_subscriptions_impl(&mut conn, npub)
+            get_user_configs_impl(npub, &state)
                 .map(Json)
                 .map_err(handle_anyhow_error)
         }

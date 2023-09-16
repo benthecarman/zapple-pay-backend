@@ -237,6 +237,41 @@ the user's current configs
 }
 ```
 
+### Delete User Subscription
+
+`GET /delete-subscription/:npub/:to_npub`
+
+returns:
+the user's current configs
+
+```json
+{
+  "zaps": [
+    {
+      "npub": "user's npub",
+      "amount_sats": 1000,
+      "emoji": "⚡",
+      "donations": [
+        {
+          "amount_sats": 1000,
+          "lnurl": "donation lnurl",
+          "npub": "donation npub"
+        }
+      ]
+    }
+  ],
+  "subscriptions": [
+    {
+      "npub": "user's npub",
+      "to_npub": "user to zap npub",
+      "amount_sats": 1000,
+      "time_period": "day"
+    }
+  ]
+}
+```
+
+
 ### Counts
 
 `GET /count`

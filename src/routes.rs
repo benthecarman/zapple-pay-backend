@@ -790,9 +790,8 @@ mod test {
     const NWC: &str = "nostr+walletconnect://246be70a7e4966f138e9e48401f33c32a1c428bbfb7aab42e3946beb8bc15e7c?relay=wss%3A%2F%2Fnostr.mutinywallet.com%2F&secret=23ea701003500d852ba2756460099217f839e1fbc9665e493b56bd2d5912e31b";
 
     fn init_state() -> State {
-        let manager = ConnectionManager::<PgConnection>::new(
-            "postgres://username:password@localhost/zapple-pay",
-        );
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let manager = ConnectionManager::<PgConnection>::new(url);
         let db_pool = Pool::builder()
             .max_size(16)
             .test_on_check_out(true)

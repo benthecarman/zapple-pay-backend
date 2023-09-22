@@ -1,11 +1,11 @@
 use crate::models::ConfigType;
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
-use chrono::Utc;
+use chrono::NaiveDateTime;
 use diesel::dsl::sum;
 use diesel::prelude::*;
 use nostr::prelude::SecretKey;
-use nostr::EventId;
+use nostr::{EventId, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -118,10 +118,16 @@ impl ZapEvent {
         Ok(zap_event)
     }
 
-    pub fn mark_zap_paid(conn: &mut PgConnection, event_id: EventId) -> anyhow::Result<ZapEvent> {
+    pub fn mark_zap_paid(
+        conn: &mut PgConnection,
+        event_id: EventId,
+        timestamp: Timestamp,
+    ) -> anyhow::Result<ZapEvent> {
+        let time =
+            NaiveDateTime::from_timestamp_opt(timestamp.as_i64(), 0).expect("Invalid timestamp");
         let zap_event = diesel::update(zap_events::table)
             .filter(zap_events::event_id.eq(event_id.to_hex()))
-            .set(zap_events::paid_at.eq(Utc::now().naive_utc()))
+            .set(zap_events::paid_at.eq(time))
             .get_result(conn)?;
         Ok(zap_event)
     }

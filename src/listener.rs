@@ -207,7 +207,7 @@ async fn handle_nwc_response(
 
         if sha256::Hash::hash(&preimage).to_hex() == zap_event.payment_hash {
             println!("Payment successful: {}", zap_event.payment_hash);
-            ZapEvent::mark_zap_paid(&mut conn, event_id)?;
+            ZapEvent::mark_zap_paid(&mut conn, event_id, event.created_at)?;
         } else {
             return Err(anyhow!("Invalid preimage"));
         }

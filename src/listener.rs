@@ -188,7 +188,10 @@ async fn handle_nwc_response(
     };
 
     let content = decrypt(&zap_event.secret_key(), &event.pubkey, event.content)?;
-    let response: Response = serde_json::from_str(&content)?;
+    let response: Response = serde_json::from_str(&content).map_err(|e| {
+        eprintln!("Error parsing response: {content}");
+        e
+    })?;
 
     if response.result_type != Method::PayInvoice {
         return Ok(());

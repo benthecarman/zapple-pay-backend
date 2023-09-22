@@ -15,7 +15,7 @@ use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
 #[cfg(not(test))]
 use nostr::prelude::ToBech32;
-use nostr::Keys;
+use nostr::{Keys, SECP256K1};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -346,18 +346,30 @@ pub(crate) async fn set_user_config_impl(
 
     let npub = payload.npub;
     let amt = payload.amount_sats;
+    let secret_key_pk = payload.nwc().secret.x_only_public_key(SECP256K1).0;
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_user(&mut conn, payload)?;
 
     let npub_hex = npub.to_hex();
     println!("New user: {npub_hex} {emoji_str} {amt}!");
-    // notify new key
-    let keys = state.pubkeys.lock().await;
+    // notify new pubkey
+    let keys = state.pubkey_channel.lock().await;
     keys.send_if_modified(|current| {
         if current.contains(&npub_hex) {
             false
         } else {
             current.push(npub_hex);
+            true
+        }
+    });
+
+    // notify new secret key
+    let secrets = state.secret_channel.lock().await;
+    secrets.send_if_modified(|current| {
+        if current.contains(&secret_key_pk) {
+            false
+        } else {
+            current.push(secret_key_pk);
             true
         }
     });
@@ -381,7 +393,7 @@ pub async fn set_user_config(
     }
 }
 
-pub(crate) fn create_user_subscription_impl(
+pub(crate) async fn create_user_subscription_impl(
     payload: CreateUserSubscription,
     state: &State,
 ) -> anyhow::Result<UserConfigs> {
@@ -391,8 +403,20 @@ pub(crate) fn create_user_subscription_impl(
     let to_npub = payload.to_npub;
     let amt = payload.amount_sats;
     let period = payload.time_period;
+    let secret_key_pk = payload.nwc().secret.x_only_public_key(SECP256K1).0;
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_subscription(&mut conn, payload)?;
+
+    // notify new secret key
+    let secrets = state.secret_channel.lock().await;
+    secrets.send_if_modified(|current| {
+        if current.contains(&secret_key_pk) {
+            false
+        } else {
+            current.push(secret_key_pk);
+            true
+        }
+    });
 
     let npub_hex = npub.to_hex();
     let to_npub_hex = to_npub.to_hex();
@@ -411,7 +435,7 @@ pub async fn create_user_subscription(
     Extension(state): Extension<State>,
     Json(payload): Json<CreateUserSubscription>,
 ) -> Result<Json<UserConfigs>, (StatusCode, String)> {
-    match create_user_subscription_impl(payload, &state) {
+    match create_user_subscription_impl(payload, &state).await {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
     }
@@ -806,12 +830,15 @@ mod test {
             .expect("migrations could not run");
 
         let (tx, _) = watch::channel(vec![]);
-        let pubkeys = Arc::new(Mutex::new(tx));
+        let pubkey_channel = Arc::new(Mutex::new(tx));
+        let (tx, _) = watch::channel(vec![]);
+        let secret_channel = Arc::new(Mutex::new(tx));
         let server_keys = Keys::generate();
 
         State {
             db_pool,
-            pubkeys,
+            pubkey_channel,
+            secret_channel,
             server_keys,
         }
     }
@@ -900,7 +927,9 @@ mod test {
             nwc: NWC.to_string(),
         };
 
-        let current = create_user_subscription_impl(payload, &state).unwrap();
+        let current = create_user_subscription_impl(payload, &state)
+            .await
+            .unwrap();
 
         let mut conn = state.db_pool.get().unwrap();
         let configs = get_user_subscriptions_impl(&mut conn, npub).unwrap();
@@ -968,7 +997,9 @@ mod test {
             nwc: NWC.to_string(),
         };
 
-        let current = create_user_subscription_impl(payload, &state).unwrap();
+        let current = create_user_subscription_impl(payload, &state)
+            .await
+            .unwrap();
 
         let mut conn = state.db_pool.get().unwrap();
         let configs = get_user_subscriptions_impl(&mut conn, npub).unwrap();
@@ -1004,7 +1035,9 @@ mod test {
             nwc: NWC.to_string(),
         };
 
-        let current = create_user_subscription_impl(payload, &state).unwrap();
+        let current = create_user_subscription_impl(payload, &state)
+            .await
+            .unwrap();
 
         let mut conn = state.db_pool.get().unwrap();
         let configs = get_user_subscriptions_impl(&mut conn, npub).unwrap();

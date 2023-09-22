@@ -3,12 +3,18 @@ use crate::models::ConfigType;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
 use crate::LnUrlCacheResult;
 use anyhow::anyhow;
+use bitcoin::hashes::hex::{FromHex, ToHex};
+use bitcoin::hashes::Hash;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
+use nostr::hashes::sha256;
 use nostr::key::XOnlyPublicKey;
+use nostr::nips::nip47::Response;
+use nostr::prelude::ResponseResult::PayInvoice;
+use nostr::prelude::{decrypt, Method};
 use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use std::collections::HashMap;
@@ -21,7 +27,8 @@ use tokio::sync::Mutex;
 pub async fn start_listener(
     relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
-    mut rx: Receiver<Vec<String>>,
+    mut pubkey_receiver: Receiver<Vec<String>>,
+    mut secret_receiver: Receiver<Vec<XOnlyPublicKey>>,
     keys: Keys,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
@@ -36,16 +43,27 @@ pub async fn start_listener(
         }
         client.connect().await;
 
-        let authors: Vec<String> = rx.borrow().clone();
+        let tagged: Vec<XOnlyPublicKey> = secret_receiver.borrow().clone();
+        let authors: Vec<String> = pubkey_receiver.borrow().clone();
 
-        let kinds = vec![Kind::Reaction, Kind::TextNote, Kind::Regular(1311)];
+        let kinds = vec![
+            Kind::Reaction,
+            Kind::TextNote,
+            Kind::Regular(1311),
+            Kind::WalletConnectResponse,
+        ];
 
-        let subscription = Filter::new()
+        let reactions = Filter::new()
             .kinds(kinds.clone())
             .authors(authors)
             .since(Timestamp::now());
 
-        client.subscribe(vec![subscription]).await;
+        let responses = Filter::new()
+            .kind(Kind::WalletConnectResponse)
+            .pubkeys(tagged)
+            .since(Timestamp::now());
+
+        client.subscribe(vec![reactions, responses]).await;
 
         println!("Listening for events...");
 
@@ -91,7 +109,10 @@ pub async fn start_listener(
                         RelayPoolNotification::Message(_, _) => {}
                     }
                 }
-                _ = rx.changed() => {
+                _ = pubkey_receiver.changed() => {
+                    break;
+                }
+                _ = secret_receiver.changed() => {
                     break;
                 }
             }
@@ -111,6 +132,7 @@ async fn handle_event(
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     match event.kind {
+        Kind::WalletConnectResponse => handle_nwc_response(db_pool, event).await,
         Kind::TextNote | Kind::Reaction => {
             handle_reaction(
                 db_pool,
@@ -138,6 +160,60 @@ async fn handle_event(
         Kind::Metadata => Ok(()),
         kind => Err(anyhow!("Invalid event kind, got: {kind:?}")),
     }
+}
+
+async fn handle_nwc_response(
+    db_pool: &Pool<ConnectionManager<PgConnection>>,
+    event: Event,
+) -> anyhow::Result<()> {
+    println!("Received nwc response: {}", event.id);
+
+    let mut tags = event.tags.clone();
+    tags.reverse();
+    let event_id = tags
+        .iter()
+        .find_map(|tag| {
+            if let Tag::Event(id, _, _) = tag {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .ok_or(anyhow!("No e tag found"))?;
+
+    let mut conn = db_pool.get()?;
+
+    let Some(zap_event) = ZapEvent::find_by_event_id(&mut conn, event_id)? else {
+        return Ok(());
+    };
+
+    let content = decrypt(&zap_event.secret_key(), &event.pubkey, event.content)?;
+    let response: Response = serde_json::from_str(&content)?;
+
+    if response.result_type != Method::PayInvoice {
+        return Ok(());
+    }
+
+    if let Some(e) = response.error {
+        return Err(anyhow!(
+            "Received error, code: {:?}, message: {}",
+            e.code,
+            e.message
+        ));
+    }
+
+    if let Some(PayInvoice(res)) = response.result {
+        let preimage: [u8; 32] = FromHex::from_hex(&res.preimage)?;
+
+        if sha256::Hash::hash(&preimage).to_hex() == zap_event.payment_hash {
+            println!("Payment successful: {}", zap_event.payment_hash);
+            ZapEvent::mark_zap_paid(&mut conn, event_id)?;
+        } else {
+            return Err(anyhow!("Invalid preimage"));
+        }
+    }
+
+    Ok(())
 }
 
 async fn handle_live_chat(
@@ -285,7 +361,7 @@ async fn pay_user(
         let lnurl = get_user_lnurl(user_key, &lnurl_cache, client).await?;
 
         // pay to lnurl
-        pay_to_lnurl(
+        let sent = pay_to_lnurl(
             keys,
             event.pubkey,
             Some(user_key),
@@ -333,6 +409,9 @@ async fn pay_user(
             &event.pubkey,
             ConfigType::Zap,
             user.zap_config.amount,
+            nwc.secret,
+            sent.payment_hash,
+            sent.event_id,
         )?;
     } else {
         let truncated: String = content.chars().take(5).collect();

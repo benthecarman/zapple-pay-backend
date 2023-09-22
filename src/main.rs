@@ -1,7 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::config::*;
+use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
+use crate::models::zap_config::ZapConfig;
 use crate::models::MIGRATIONS;
 use crate::routes::*;
 use axum::http::{Method, StatusCode, Uri};
@@ -13,8 +15,8 @@ use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
 use diesel_migrations::MigrationHarness;
 use lnurl::lnurl::LnUrl;
-use nostr::key::SecretKey;
-use nostr::Keys;
+use nostr::key::{SecretKey, XOnlyPublicKey};
+use nostr::{Keys, SECP256K1};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_reader, to_string};
 use std::collections::HashMap;
@@ -36,7 +38,8 @@ mod subscription_handler;
 #[derive(Clone)]
 pub struct State {
     db_pool: Pool<ConnectionManager<PgConnection>>,
-    pubkeys: Arc<Mutex<Sender<Vec<String>>>>,
+    pubkey_channel: Arc<Mutex<Sender<Vec<String>>>>,
+    secret_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
     pub server_keys: Keys,
 }
 
@@ -70,25 +73,35 @@ async fn main() -> anyhow::Result<()> {
 
     let keys = get_keys(keys_path);
 
-    let mut start = vec![];
-
-    let from_db = User::get_all_npubs(&mut connection)?
+    let mut pubkeys = User::get_all_npubs(&mut connection)?
         .into_iter()
         .map(|u| u.to_hex())
         .collect::<Vec<_>>();
+    pubkeys.sort();
+
+    let mut secrets = ZapConfig::get_nwc_secrets(&mut connection)?;
+    let subscription_secrets = SubscriptionConfig::get_nwc_secrets(&mut connection)?;
+    secrets.extend(subscription_secrets);
+    secrets.sort();
+    secrets.dedup();
     drop(connection);
 
-    start.extend(from_db);
-    start.sort();
-    start.dedup();
+    // convert to pubkeys and hex
+    let secrets = secrets
+        .into_iter()
+        .map(|s| s.x_only_public_key(SECP256K1).0)
+        .collect::<Vec<_>>();
 
-    let (tx, rx) = watch::channel(start);
+    let (pubkey_sender, pubkey_receiver) = watch::channel(pubkeys);
+    let pubkey_channel = Arc::new(Mutex::new(pubkey_sender));
 
-    let tx_shared = Arc::new(Mutex::new(tx));
+    let (secret_sender, secret_receiver) = watch::channel(secrets);
+    let secret_channel = Arc::new(Mutex::new(secret_sender));
 
     let state = State {
         db_pool,
-        pubkeys: tx_shared.clone(),
+        pubkey_channel: pubkey_channel.clone(),
+        secret_channel,
         server_keys: keys.server_keys(),
     };
 
@@ -96,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("Failed to parse bind/port for webserver");
 
-    println!("Webserver running on http://{}", addr);
+    println!("Webserver running on http://{addr}");
 
     let server_router = Router::new()
         .route("/set-user", post(set_user_config))
@@ -130,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60 * 60)).await;
-            let tx = tx_shared.lock().await;
+            let tx = pubkey_channel.lock().await;
             tx.send_if_modified(|_| true);
         }
     });
@@ -148,7 +161,8 @@ async fn main() -> anyhow::Result<()> {
             if let Err(e) = listener::start_listener(
                 relays.clone(),
                 db_pool.clone(),
-                rx.clone(),
+                pubkey_receiver.clone(),
+                secret_receiver.clone(),
                 server_keys.clone(),
                 l_cache.clone(),
                 p_cache.clone(),

@@ -1,6 +1,7 @@
 use crate::LnUrlCacheResult;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::ToHex;
+use bitcoin::hashes::Hash;
 use bitcoin::XOnlyPublicKey;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
@@ -18,6 +19,11 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::Mutex;
+
+pub struct SentInvoice {
+    pub payment_hash: [u8; 32],
+    pub event_id: EventId,
+}
 
 pub async fn get_user_lnurl(
     user_key: XOnlyPublicKey,
@@ -235,7 +241,7 @@ pub async fn pay_to_lnurl(
     amount_msats: u64,
     nwc: NostrWalletConnectURI,
     pay_cache: &Mutex<HashMap<LnUrl, PayResponse>>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<SentInvoice> {
     let invoice = match get_invoice_from_lnurl(
         keys,
         from_user,
@@ -273,13 +279,18 @@ pub async fn pay_to_lnurl(
         None
     };
 
+    let sent = SentInvoice {
+        payment_hash: invoice.payment_hash().into_inner(),
+        event_id: event.id,
+    };
+
     client.add_relay(&nwc.relay_url, proxy).await?;
     client.connect().await;
     client.send_event(event).await?;
     client.disconnect().await?;
 
     println!("Sent event to {}", nwc.relay_url);
-    Ok(())
+    Ok(sent)
 }
 
 fn create_nwc_request(nwc: &NostrWalletConnectURI, invoice: String) -> Event {

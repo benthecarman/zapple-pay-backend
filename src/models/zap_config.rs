@@ -3,6 +3,7 @@ use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
 use nostr::prelude::NostrWalletConnectURI;
+use nostr::secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -54,6 +55,19 @@ impl ZapConfig {
     pub fn get_config_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
         let count = zap_configs::table.count().get_result(conn)?;
         Ok(count)
+    }
+
+    pub fn get_nwc_secrets(conn: &mut PgConnection) -> anyhow::Result<Vec<SecretKey>> {
+        let strings: Vec<String> = zap_configs::table
+            .select(zap_configs::nwc)
+            .distinct()
+            .load(conn)?;
+        let secrets = strings
+            .into_iter()
+            .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
+            .map(|nwc| nwc.secret)
+            .collect();
+        Ok(secrets)
     }
 
     pub fn get_by_pubkey(

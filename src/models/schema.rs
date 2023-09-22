@@ -50,6 +50,10 @@ diesel::table! {
         config_type -> Text,
         amount -> Int4,
         created_at -> Timestamptz,
+        secret_key -> Text,
+        payment_hash -> Text,
+        event_id -> Text,
+        paid_at -> Nullable<Timestamp>,
     }
 }
 

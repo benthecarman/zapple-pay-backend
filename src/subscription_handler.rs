@@ -2,6 +2,7 @@ use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
 use crate::models::zap_event::ZapEvent;
 use crate::models::{schema, ConfigType};
+use crate::profile_handler::SentInvoice;
 use crate::LnUrlCacheResult;
 use bitcoin::XOnlyPublicKey;
 use chrono::{Timelike, Utc};
@@ -112,11 +113,11 @@ pub async fn start_subscription_handler(
                 nwc,
                 &pay_cache,
             )
-            .map(|res| res.ok().map(|_| sub));
+            .map(|res| res.ok().map(|res| (res, sub)));
 
             futs.push(fut);
         }
-        let successful: Vec<SubscriptionConfig> = futures::future::join_all(futs)
+        let successful: Vec<(SentInvoice, SubscriptionConfig)> = futures::future::join_all(futs)
             .await
             .into_iter()
             .flatten()
@@ -136,7 +137,7 @@ pub async fn start_subscription_handler(
         // save zap events and update last_paid
         let mut conn = db_pool.get()?;
         conn.transaction::<_, anyhow::Error, _>(|conn| {
-            for sub in successful.iter() {
+            for (sent, sub) in successful.iter() {
                 let from_user = user_keys.get(&sub.user_id).unwrap();
                 let to_npub = sub.to_npub();
                 // save to db
@@ -146,14 +147,21 @@ pub async fn start_subscription_handler(
                     &to_npub,
                     ConfigType::Subscription,
                     sub.amount,
+                    sub.nwc().secret,
+                    sent.payment_hash,
+                    sent.event_id,
                 )?;
             }
 
             // update last_paid
             diesel::update(schema::subscription_configs::table)
                 .filter(
-                    schema::subscription_configs::id
-                        .eq_any(successful.iter().map(|sub| sub.id).collect::<Vec<i32>>()),
+                    schema::subscription_configs::id.eq_any(
+                        successful
+                            .iter()
+                            .map(|(_, sub)| sub.id)
+                            .collect::<Vec<i32>>(),
+                    ),
                 )
                 .set(schema::subscription_configs::last_paid.eq(Some(start.naive_local())))
                 .execute(conn)?;

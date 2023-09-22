@@ -2,7 +2,7 @@ use crate::routes::{SubscriptionPeriod, ALL_SUBSCRIPTION_PERIODS};
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
-use nostr::prelude::NostrWalletConnectURI;
+use nostr::prelude::{NostrWalletConnectURI, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -76,6 +76,19 @@ impl SubscriptionConfig {
     pub fn get_config_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
         let count = subscription_configs::table.count().get_result(conn)?;
         Ok(count)
+    }
+
+    pub fn get_nwc_secrets(conn: &mut PgConnection) -> anyhow::Result<Vec<SecretKey>> {
+        let strings: Vec<String> = subscription_configs::table
+            .select(subscription_configs::nwc)
+            .distinct()
+            .load(conn)?;
+        let secrets = strings
+            .into_iter()
+            .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
+            .map(|nwc| nwc.secret)
+            .collect();
+        Ok(secrets)
     }
 
     pub fn get_by_pubkey(

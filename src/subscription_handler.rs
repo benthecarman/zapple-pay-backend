@@ -98,7 +98,10 @@ pub async fn start_subscription_handler(
                     println!("Profile with no lnurl found for {to_npub}");
                     continue;
                 }
-                Some(LnUrlCacheResult::LnUrl((lnurl, _))) => lnurl.clone(),
+                Some(LnUrlCacheResult::LnUrl((lnurl, _))) => (lnurl.clone(), None),
+                Some(LnUrlCacheResult::MultipleLnUrl((lnurl, lnurl2, _))) => {
+                    (lnurl.clone(), Some(lnurl2.clone()))
+                }
             };
             let nwc = sub.nwc();
             let fut = crate::profile_handler::pay_to_lnurl(

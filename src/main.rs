@@ -250,6 +250,8 @@ fn get_keys(path: PathBuf) -> ZapplePayKeys {
 pub enum LnUrlCacheResult {
     /// Successful result, contains the lnurl and the timestamp we got it
     LnUrl((LnUrl, u64)),
+    /// Successful result, contains both lnurls and the timestamp we got it
+    MultipleLnUrl((LnUrl, LnUrl, u64)),
     /// Failed result, contains the timestamp of the last metadata event
     Timestamp(u64),
 }

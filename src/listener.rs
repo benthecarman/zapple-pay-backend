@@ -381,7 +381,7 @@ async fn pay_user(
         let mut futs = vec![];
         for donation in user.donations {
             let (lnurl, to_user) = match donation.lnurl() {
-                Some(lnurl) => (lnurl, None),
+                Some(lnurl) => ((lnurl, None), None),
                 None => {
                     let npub = donation.npub().unwrap();
                     let lnurl = get_user_lnurl(npub, &lnurl_cache, client).await?;

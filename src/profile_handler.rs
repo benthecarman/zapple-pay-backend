@@ -29,7 +29,7 @@ pub async fn get_user_lnurl(
     user_key: XOnlyPublicKey,
     lnurl_cache: &Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>,
     client: &Client,
-) -> anyhow::Result<LnUrl> {
+) -> anyhow::Result<(LnUrl, Option<LnUrl>)> {
     let (cache_result, timestamp) = {
         let cache = lnurl_cache.lock().await;
         let cache = cache.get(&user_key);
@@ -41,7 +41,15 @@ pub async fn get_user_lnurl(
                     if Timestamp::now().as_u64() - timestamp > 60 * 60 * 24 {
                         (None, None)
                     } else {
-                        (Some(lnurl.clone()), None)
+                        (Some((lnurl.clone(), None)), None)
+                    }
+                }
+                LnUrlCacheResult::MultipleLnUrl((lnurl, lnurl2, timestamp)) => {
+                    // if we got the lnurl more than 24 hours ago, return None
+                    if Timestamp::now().as_u64() - timestamp > 60 * 60 * 24 {
+                        (None, None)
+                    } else {
+                        (Some((lnurl.clone(), Some(lnurl2.clone()))), None)
                     }
                 }
                 LnUrlCacheResult::Timestamp(timestamp) => (None, Some(*timestamp)),
@@ -68,6 +76,7 @@ pub async fn get_user_lnurl(
                 .await?;
 
             let mut lnurl: Option<LnUrl> = None;
+            let mut lnurl2: Option<LnUrl> = None;
 
             for event in events {
                 if event.pubkey == user_key && event.kind == Kind::Metadata {
@@ -80,7 +89,6 @@ pub async fn get_user_lnurl(
                             .and_then(|s| LightningAddress::from_str(s).ok());
                         if let Some(lnaddr) = lud16 {
                             lnurl = Some(lnaddr.lnurl());
-                            break;
                         }
 
                         // try parse lnurl pay
@@ -89,7 +97,11 @@ pub async fn get_user_lnurl(
                             .and_then(|v| v.as_str())
                             .and_then(|s| LnUrl::from_str(s).ok());
                         if let Some(url) = lud06 {
-                            lnurl = Some(url);
+                            if lnurl.is_some() {
+                                lnurl = Some(url);
+                            } else {
+                                lnurl2 = Some(url);
+                            }
                             break;
                         }
 
@@ -112,9 +124,16 @@ pub async fn get_user_lnurl(
 
             let mut cache = lnurl_cache.lock().await;
             let now = Timestamp::now().as_u64();
-            cache.insert(user_key, LnUrlCacheResult::LnUrl((lnurl.clone(), now)));
 
-            lnurl
+            match lnurl2.as_ref() {
+                None => cache.insert(user_key, LnUrlCacheResult::LnUrl((lnurl.clone(), now))),
+                Some(lnurl2) => cache.insert(
+                    user_key,
+                    LnUrlCacheResult::MultipleLnUrl((lnurl.clone(), lnurl2.clone(), now)),
+                ),
+            };
+
+            (lnurl, lnurl2)
         }
     };
 
@@ -236,7 +255,7 @@ pub async fn pay_to_lnurl(
     to_user: Option<XOnlyPublicKey>,
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
-    lnurl: LnUrl,
+    lnurl: (LnUrl, Option<LnUrl>),
     lnurl_client: &AsyncClient,
     amount_msats: u64,
     nwc: NostrWalletConnectURI,
@@ -247,8 +266,8 @@ pub async fn pay_to_lnurl(
         from_user,
         to_user,
         event_id,
-        a_tag,
-        &lnurl,
+        a_tag.clone(),
+        &lnurl.0,
         lnurl_client,
         amount_msats,
         pay_cache,
@@ -256,12 +275,28 @@ pub async fn pay_to_lnurl(
     .await
     {
         Ok(invoice) => invoice,
-        Err(e) => {
-            return Err(anyhow!(
-                "Error getting invoice from lnurl ({}): {e}",
-                lnurl.url
-            ));
-        }
+        Err(e) => match lnurl.1 {
+            None => {
+                return Err(anyhow!(
+                    "Error getting invoice from lnurl ({}): {e}",
+                    lnurl.0.url
+                ));
+            }
+            Some(lnurl) => {
+                get_invoice_from_lnurl(
+                    keys,
+                    from_user,
+                    to_user,
+                    event_id,
+                    a_tag,
+                    &lnurl,
+                    lnurl_client,
+                    amount_msats,
+                    pay_cache,
+                )
+                .await?
+            }
+        },
     };
 
     let event = create_nwc_request(&nwc, invoice.to_string());

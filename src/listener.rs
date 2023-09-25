@@ -1,3 +1,4 @@
+use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
 use crate::models::ConfigType;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
@@ -6,14 +7,14 @@ use anyhow::anyhow;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::Hash;
 use diesel::r2d2::{ConnectionManager, Pool};
-use diesel::PgConnection;
+use diesel::{Connection, PgConnection};
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
 use nostr::hashes::sha256;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NIP47Error, Response, ResponseResult};
-use nostr::prelude::decrypt;
+use nostr::prelude::{decrypt, ErrorCode};
 use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde::{Deserialize, Serialize};
@@ -222,6 +223,20 @@ async fn handle_nwc_response(
     }
 
     if let Some(e) = response.error {
+        // this means the user deleted it from alby, safe to delete from db
+        if matches!(e.code, ErrorCode::Unauthorized)
+            && e.message == "The public key does not have a wallet connected."
+        {
+            let mut conn = db_pool.get()?;
+            conn.transaction::<_, anyhow::Error, _>(|conn| {
+                ZapEvent::delete_by_event_id(conn, event_id)?;
+
+                // todo delete zap config or subscription
+
+                Ok(())
+            });
+        }
+
         return Err(anyhow!(
             "Received error, code: {:?}, message: {}",
             e.code,

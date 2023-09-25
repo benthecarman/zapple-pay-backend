@@ -30,11 +30,11 @@ pub struct ZapEvent {
     to_npub: String,
     config_type: String,
     amount: i32,
-    created_at: chrono::NaiveDateTime,
+    created_at: NaiveDateTime,
     secret_key: String,
     pub payment_hash: String,
     event_id: String,
-    paid_at: Option<chrono::NaiveDateTime>,
+    paid_at: Option<NaiveDateTime>,
 }
 
 #[derive(Insertable, AsChangeset)]
@@ -115,6 +115,17 @@ impl ZapEvent {
             .filter(zap_events::event_id.eq(event_id.to_hex()))
             .first::<ZapEvent>(conn)
             .optional()?;
+        Ok(zap_event)
+    }
+
+    pub fn delete_by_event_id(
+        conn: &mut PgConnection,
+        event_id: EventId,
+    ) -> anyhow::Result<Option<ZapEvent>> {
+        let zap_event =
+            diesel::delete(zap_events::table.filter(zap_events::event_id.eq(event_id.to_hex())))
+                .get_result(conn)
+                .optional()?;
         Ok(zap_event)
     }
 

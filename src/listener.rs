@@ -12,11 +12,12 @@ use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
 use nostr::hashes::sha256;
 use nostr::key::XOnlyPublicKey;
-use nostr::nips::nip47::Response;
-use nostr::prelude::ResponseResult::PayInvoice;
-use nostr::prelude::{decrypt, Method};
+use nostr::nips::nip47::{Method, NIP47Error, Response, ResponseResult};
+use nostr::prelude::decrypt;
 use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
 use nostr_sdk::{Client, RelayPoolNotification};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -162,6 +163,28 @@ async fn handle_event(
     }
 }
 
+// struct for handling alby not sending result type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseNoType {
+    /// Request Method
+    pub result_type: Option<Method>,
+    /// NIP47 Error
+    pub error: Option<NIP47Error>,
+    /// NIP47 Result
+    pub result: Option<Value>,
+}
+
+impl ResponseNoType {
+    pub fn into_response(mut self) -> anyhow::Result<Response> {
+        if self.result_type.is_none() {
+            self.result_type = Some(Method::PayInvoice);
+        }
+        let json = json!(self);
+        let res: Response = serde_json::from_value(json)?;
+        Ok(res)
+    }
+}
+
 async fn handle_nwc_response(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
     event: Event,
@@ -188,10 +211,11 @@ async fn handle_nwc_response(
     };
 
     let content = decrypt(&zap_event.secret_key(), &event.pubkey, event.content)?;
-    let response: Response = serde_json::from_str(&content).map_err(|e| {
+    let response: ResponseNoType = serde_json::from_str(&content).map_err(|e| {
         eprintln!("Error parsing response: {content}");
         e
     })?;
+    let response = response.into_response()?;
 
     if response.result_type != Method::PayInvoice {
         return Ok(());
@@ -205,7 +229,7 @@ async fn handle_nwc_response(
         ));
     }
 
-    if let Some(PayInvoice(res)) = response.result {
+    if let Some(ResponseResult::PayInvoice(res)) = response.result {
         let preimage: [u8; 32] = FromHex::from_hex(&res.preimage)?;
 
         if sha256::Hash::hash(&preimage).to_hex() == zap_event.payment_hash {

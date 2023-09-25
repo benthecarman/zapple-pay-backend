@@ -98,10 +98,13 @@ pub async fn get_user_lnurl(
                             .and_then(|s| LnUrl::from_str(s).ok());
                         if let Some(url) = lud06 {
                             if lnurl.is_some() {
-                                lnurl = Some(url);
-                            } else {
                                 lnurl2 = Some(url);
+                            } else {
+                                lnurl = Some(url);
                             }
+                        }
+
+                        if lnurl.is_some() {
                             break;
                         }
 
@@ -221,7 +224,7 @@ async fn get_invoice_from_lnurl(
             .await?
         };
 
-        match res {
+        let invoice_str = match res {
             Ok(inv) => inv.invoice(),
             Err(_) => tokio::time::timeout(
                 Duration::from_secs(30),
@@ -233,7 +236,9 @@ async fn get_invoice_from_lnurl(
             )
             .await??
             .invoice(),
-        }
+        };
+
+        Bolt11Invoice::from_str(&invoice_str)?
     };
 
     if !invoice

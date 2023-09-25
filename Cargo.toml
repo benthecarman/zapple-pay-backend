@@ -18,7 +18,7 @@ lightning = "0.0.116"
 lightning-invoice = "0.24.0"
 clap = { version = "4.1.14", features = ["derive"] }
 futures = "0.3.28"
-lnurl-rs = { version = "0.2.6", default-features = false, features = ["async", "async-https"] }
+lnurl-rs = { version = "0.2.7", default-features = false, features = ["async", "async-https"] }
 nostr = { version = "=0.23.0-bitcoin-v0.29", default-features = false, features = ["nip47"] }
 nostr-sdk = "=0.23.0-bitcoin-v0.29"
 serde = "1.0"

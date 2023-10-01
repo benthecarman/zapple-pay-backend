@@ -219,23 +219,27 @@ async fn get_invoice_from_lnurl(
                     &pay,
                     amount_msats,
                     zap_request.as_ref().map(|e| e.as_json()),
+                    None,
                 ),
             )
             .await?
         };
 
         let invoice_str = match res {
-            Ok(inv) => inv.invoice(),
-            Err(_) => tokio::time::timeout(
-                Duration::from_secs(30),
-                lnurl_client.get_invoice(
-                    &pay,
-                    amount_msats,
-                    zap_request.map(|e| urlencoding::encode(&e.as_json()).to_string()),
-                ),
-            )
-            .await??
-            .invoice(),
+            Ok(inv) => inv.pr,
+            Err(_) => {
+                tokio::time::timeout(
+                    Duration::from_secs(30),
+                    lnurl_client.get_invoice(
+                        &pay,
+                        amount_msats,
+                        zap_request.map(|e| urlencoding::encode(&e.as_json()).to_string()),
+                        None,
+                    ),
+                )
+                .await??
+                .pr
+            }
         };
 
         Bolt11Invoice::from_str(&invoice_str)?

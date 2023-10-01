@@ -15,7 +15,7 @@ use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
 #[cfg(not(test))]
 use nostr::prelude::ToBech32;
-use nostr::{Keys, SECP256K1};
+use nostr::{Keys, Url, SECP256K1};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -796,6 +796,20 @@ pub async fn count(
     Extension(state): Extension<State>,
 ) -> Result<Json<Counts>, (StatusCode, String)> {
     match count_impl(&state).await {
+        Ok(res) => Ok(Json(res)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
+pub async fn relays_impl(state: &State) -> anyhow::Result<Vec<Url>> {
+    let mut conn = state.db_pool.get()?;
+    ZapConfig::get_nwc_relays(&mut conn)
+}
+
+pub async fn relays(
+    Extension(state): Extension<State>,
+) -> Result<Json<Vec<Url>>, (StatusCode, String)> {
+    match relays_impl(&state).await {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
     }

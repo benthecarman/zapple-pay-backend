@@ -121,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/delete-user/:npub/:emoji", get(delete_user_config))
         .route("/delete-user/:npub", get(delete_user_configs))
         .route("/count", get(count))
+        .route("/relays", get(relays))
         .route("/get-user/:npub/:emoji", get(get_user_config))
         .route("/get-user/:npub", get(get_user_configs))
         .route("/get-subscriptions/:npub", get(get_user_subscriptions))

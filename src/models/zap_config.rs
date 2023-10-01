@@ -90,7 +90,7 @@ impl ZapConfig {
         // count the relays
         let mut counts = HashMap::new();
         for relay in relays {
-            *counts.entry(relay).or_insert(0) += 1;
+            counts.entry(relay).and_modify(|c| *c += 1).or_insert(1);
         }
 
         Ok(counts)

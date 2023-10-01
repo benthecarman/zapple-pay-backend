@@ -766,6 +766,7 @@ pub struct Counts {
     zap_configs: i64,
     subscription_configs: i64,
     zap_count: i64,
+    unconfirmed_count: i64,
     zap_total: i64,
 }
 
@@ -777,6 +778,7 @@ pub async fn count_impl(state: &State) -> anyhow::Result<Counts> {
         let zap_configs = ZapConfig::get_config_count(conn)?;
         let subscription_configs = SubscriptionConfig::get_config_count(conn)?;
         let zap_count = ZapEvent::get_zap_count(conn)?;
+        let unconfirmed_count = ZapEvent::get_unconfirmed_zap_count(conn)?;
         let zap_total = ZapEvent::get_zap_total(conn)?;
 
         Ok(Counts {
@@ -784,6 +786,7 @@ pub async fn count_impl(state: &State) -> anyhow::Result<Counts> {
             zap_configs,
             subscription_configs,
             zap_count,
+            unconfirmed_count,
             zap_total,
         })
     })

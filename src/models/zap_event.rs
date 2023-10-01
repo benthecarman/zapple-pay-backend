@@ -71,6 +71,14 @@ impl ZapEvent {
         Ok(count)
     }
 
+    pub fn get_unconfirmed_zap_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
+        let count = zap_events::table
+            .filter(zap_events::paid_at.is_null())
+            .count()
+            .get_result(conn)?;
+        Ok(count)
+    }
+
     pub fn get_zap_total(conn: &mut PgConnection) -> anyhow::Result<i64> {
         let total: Option<i64> = zap_events::table
             .filter(zap_events::paid_at.is_not_null())

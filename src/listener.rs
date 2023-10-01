@@ -1,3 +1,4 @@
+use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
 use crate::models::ConfigType;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
@@ -26,7 +27,7 @@ use tokio::sync::watch::Receiver;
 use tokio::sync::Mutex;
 
 pub async fn start_listener(
-    relays: Vec<String>,
+    mut relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
     mut pubkey_receiver: Receiver<Vec<String>>,
     mut secret_receiver: Receiver<Vec<XOnlyPublicKey>>,
@@ -39,6 +40,14 @@ pub async fn start_listener(
 
     loop {
         let client = Client::new(&keys);
+
+        let mut conn = db_pool.get()?;
+        let nwc_relays = ZapConfig::get_nwc_relays(&mut conn)?;
+        drop(conn);
+        relays.extend(nwc_relays.into_iter().map(|r| r.to_string()));
+        relays.sort();
+        relays.dedup();
+
         for relay in relays.iter() {
             client.add_relay(relay.as_str(), None).await?;
         }

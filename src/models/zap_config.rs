@@ -4,6 +4,7 @@ use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
 use nostr::prelude::NostrWalletConnectURI;
 use nostr::secp256k1::SecretKey;
+use nostr::Url;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -62,12 +63,33 @@ impl ZapConfig {
             .select(zap_configs::nwc)
             .distinct()
             .load(conn)?;
-        let secrets = strings
+        let mut secrets: Vec<SecretKey> = strings
             .into_iter()
             .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
             .map(|nwc| nwc.secret)
             .collect();
+
+        secrets.sort();
+        secrets.dedup();
+
         Ok(secrets)
+    }
+
+    pub fn get_nwc_relays(conn: &mut PgConnection) -> anyhow::Result<Vec<Url>> {
+        let strings: Vec<String> = zap_configs::table
+            .select(zap_configs::nwc)
+            .distinct()
+            .load(conn)?;
+        let mut relays: Vec<Url> = strings
+            .into_iter()
+            .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
+            .map(|nwc| nwc.relay_url)
+            .collect();
+
+        relays.sort();
+        relays.dedup();
+
+        Ok(relays)
     }
 
     pub fn get_by_pubkey(

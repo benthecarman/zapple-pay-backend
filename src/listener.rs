@@ -1,4 +1,3 @@
-use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
 use crate::models::ConfigType;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
@@ -234,7 +233,7 @@ async fn handle_nwc_response(
                 // todo delete zap config or subscription
 
                 Ok(())
-            });
+            })?;
         }
 
         return Err(anyhow!(

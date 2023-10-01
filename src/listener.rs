@@ -20,6 +20,7 @@ use nostr_sdk::{Client, RelayPoolNotification};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,7 +50,18 @@ pub async fn start_listener(
         relays.dedup();
 
         for relay in relays.iter() {
-            client.add_relay(relay.as_str(), None).await?;
+            if relay.is_empty() {
+                continue;
+            }
+            if relay.contains("localhost") {
+                continue;
+            }
+            let proxy = if relay.contains(".onion") {
+                Some(SocketAddr::from_str("127.0.0.1:9050")?)
+            } else {
+                None
+            };
+            client.add_relay(relay.as_str(), proxy).await?;
         }
         client.connect().await;
 

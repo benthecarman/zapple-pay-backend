@@ -6,6 +6,7 @@ use nostr::prelude::NostrWalletConnectURI;
 use nostr::secp256k1::SecretKey;
 use nostr::Url;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use super::schema::users;
@@ -75,21 +76,24 @@ impl ZapConfig {
         Ok(secrets)
     }
 
-    pub fn get_nwc_relays(conn: &mut PgConnection) -> anyhow::Result<Vec<Url>> {
+    pub fn get_nwc_relays(conn: &mut PgConnection) -> anyhow::Result<HashMap<Url, usize>> {
         let strings: Vec<String> = zap_configs::table
             .select(zap_configs::nwc)
             .distinct()
             .load(conn)?;
-        let mut relays: Vec<Url> = strings
+        let relays: Vec<Url> = strings
             .into_iter()
             .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
             .map(|nwc| nwc.relay_url)
             .collect();
 
-        relays.sort();
-        relays.dedup();
+        // count the relays
+        let mut counts = HashMap::new();
+        for relay in relays {
+            *counts.entry(relay).or_insert(0) += 1;
+        }
 
-        Ok(relays)
+        Ok(counts)
     }
 
     pub fn get_by_pubkey(

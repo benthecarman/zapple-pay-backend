@@ -17,6 +17,7 @@ use nostr::nips::nip47::NostrWalletConnectURI;
 use nostr::prelude::ToBech32;
 use nostr::{Keys, Url, SECP256K1};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
@@ -801,14 +802,14 @@ pub async fn count(
     }
 }
 
-pub async fn relays_impl(state: &State) -> anyhow::Result<Vec<Url>> {
+pub async fn relays_impl(state: &State) -> anyhow::Result<HashMap<Url, usize>> {
     let mut conn = state.db_pool.get()?;
     ZapConfig::get_nwc_relays(&mut conn)
 }
 
 pub async fn relays(
     Extension(state): Extension<State>,
-) -> Result<Json<Vec<Url>>, (StatusCode, String)> {
+) -> Result<Json<HashMap<Url, usize>>, (StatusCode, String)> {
     match relays_impl(&state).await {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),

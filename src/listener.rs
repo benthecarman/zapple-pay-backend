@@ -44,7 +44,7 @@ pub async fn start_listener(
         let mut conn = db_pool.get()?;
         let nwc_relays = ZapConfig::get_nwc_relays(&mut conn)?;
         drop(conn);
-        relays.extend(nwc_relays.into_iter().map(|r| r.to_string()));
+        relays.extend(nwc_relays.into_keys().map(|r| r.to_string()));
         relays.sort();
         relays.dedup();
 

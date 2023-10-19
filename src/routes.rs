@@ -350,6 +350,7 @@ pub(crate) async fn set_user_config_impl(
     let secret_key_pk = payload.nwc().secret.x_only_public_key(SECP256K1).0;
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_user(&mut conn, payload)?;
+    drop(conn);
 
     let npub_hex = npub.to_hex();
     println!("New user: {npub_hex} {emoji_str} {amt}!");
@@ -407,6 +408,7 @@ pub(crate) async fn create_user_subscription_impl(
     let secret_key_pk = payload.nwc().secret.x_only_public_key(SECP256K1).0;
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_subscription(&mut conn, payload)?;
+    drop(conn);
 
     // notify new secret key
     let secrets = state.secret_channel.lock().await;

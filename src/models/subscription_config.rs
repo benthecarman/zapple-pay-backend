@@ -137,6 +137,10 @@ impl SubscriptionConfig {
             // double check that we don't have any configs that don't need payment
             configs.retain(|config| config.needs_payment());
 
+            // make sure there is no duplicates
+            configs.sort_by_key(|config| config.id);
+            configs.dedup();
+
             Ok(configs)
         })
     }

@@ -9,6 +9,7 @@ use chrono::{Timelike, Utc};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::{Connection, ExpressionMethods, PgConnection, RunQueryDsl};
 use futures::future::FutureExt;
+use futures::TryFutureExt;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::Builder;
@@ -116,6 +117,10 @@ pub async fn start_subscription_handler(
                 nwc,
                 &pay_cache,
             )
+            .map_err(|e| {
+                eprintln!("Error paying to lnurl: {e}");
+                e
+            })
             .map(|res| res.ok().map(|res| (res, sub)));
 
             futs.push(fut);

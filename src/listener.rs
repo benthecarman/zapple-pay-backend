@@ -188,7 +188,7 @@ async fn handle_event(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseNoType {
     /// Request Method
-    pub result_type: Option<Method>,
+    pub result_type: Option<String>,
     /// NIP47 Error
     pub error: Option<NIP47Error>,
     /// NIP47 Result
@@ -197,8 +197,13 @@ pub struct ResponseNoType {
 
 impl ResponseNoType {
     pub fn into_response(mut self) -> anyhow::Result<Response> {
-        if self.result_type.is_none() {
-            self.result_type = Some(Method::PayInvoice);
+        if self
+            .result_type
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
+            self.result_type = Some("pay_invoice".to_string());
         }
         let json = json!(self);
         let res: Response = serde_json::from_value(json)?;

@@ -8,8 +8,6 @@ use bitcoin::XOnlyPublicKey;
 use chrono::{Timelike, Utc};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::{Connection, ExpressionMethods, PgConnection, RunQueryDsl};
-use futures::future::FutureExt;
-use futures::TryFutureExt;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::Builder;
@@ -105,23 +103,33 @@ pub async fn start_subscription_handler(
                 }
             };
             let nwc = sub.nwc();
-            let fut = crate::profile_handler::pay_to_lnurl(
-                &keys,
-                *from_user,
-                Some(to_npub),
-                None,
-                None,
-                lnurl,
-                &lnurl_client,
-                sub.amount_msats(),
-                nwc,
-                &pay_cache,
-            )
-            .map_err(|e| {
-                eprintln!("Error paying to lnurl: {e}");
-                e
-            })
-            .map(|res| res.ok().map(|res| (res, sub)));
+            let tried_lnurl = lnurl.0.clone();
+            let keys = keys.clone();
+            let lnurl_client = lnurl_client.clone();
+            let pay_cache = pay_cache.clone();
+            let fut = async move {
+                let amount_msats = sub.amount_msats();
+                match crate::profile_handler::pay_to_lnurl(
+                    &keys,
+                    *from_user,
+                    Some(to_npub),
+                    None,
+                    None,
+                    lnurl,
+                    &lnurl_client,
+                    amount_msats,
+                    nwc,
+                    &pay_cache,
+                )
+                .await
+                {
+                    Err(e) => {
+                        eprintln!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
+                        Err(e)
+                    }
+                    Ok(res) => Ok((res, sub)),
+                }
+            };
 
             futs.push(fut);
         }

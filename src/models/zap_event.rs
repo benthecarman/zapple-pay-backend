@@ -59,6 +59,10 @@ impl ZapEvent {
         XOnlyPublicKey::from_str(&self.to_npub).expect("Invalid XOnlyPublicKey")
     }
 
+    pub fn config_type(&self) -> ConfigType {
+        ConfigType::from_str(&self.config_type).expect("Invalid ConfigType")
+    }
+
     pub fn secret_key(&self) -> SecretKey {
         SecretKey::from_str(&self.secret_key).expect("Invalid SecretKey")
     }

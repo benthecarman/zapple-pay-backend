@@ -1,5 +1,8 @@
+use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
+use crate::models::zap_event_to_subscription_config::ZapEventToSubscriptionConfig;
+use crate::models::zap_event_to_zap_config::ZapEventToZapConfig;
 use crate::models::ConfigType;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
 use crate::LnUrlCacheResult;
@@ -254,9 +257,28 @@ async fn handle_nwc_response(
         {
             let mut conn = db_pool.get()?;
             conn.transaction::<_, anyhow::Error, _>(|conn| {
-                ZapEvent::delete_by_event_id(conn, event_id)?;
+                let event_opt = ZapEvent::delete_by_event_id(conn, event_id)?;
 
-                // todo delete zap config or subscription
+                if let Some(event) = event_opt {
+                    match event.config_type() {
+                        ConfigType::Zap => {
+                            if let Some(to) =
+                                ZapEventToZapConfig::find_by_zap_event_id(conn, event.id)?
+                            {
+                                ZapConfig::delete_by_id(conn, to.zap_config_id)?;
+                                println!("Deleted user's zap config");
+                            }
+                        }
+                        ConfigType::Subscription => {
+                            if let Some(to) =
+                                ZapEventToSubscriptionConfig::find_by_zap_event_id(conn, event.id)?
+                            {
+                                SubscriptionConfig::delete_by_id(conn, to.subscription_config_id)?;
+                                println!("Deleted user's subscription config");
+                            }
+                        }
+                    }
+                }
 
                 Ok(())
             })?;
@@ -470,16 +492,22 @@ async fn pay_user(
         futures::future::join_all(futs).await;
 
         // save to db
-        ZapEvent::create_zap_event(
-            &mut conn,
-            &user_key,
-            &event.pubkey,
-            ConfigType::Zap,
-            user.zap_config.amount,
-            nwc.secret,
-            sent.payment_hash,
-            sent.event_id,
-        )?;
+        conn.transaction::<_, anyhow::Error, _>(|conn| {
+            let event = ZapEvent::create_zap_event(
+                conn,
+                &user_key,
+                &event.pubkey,
+                ConfigType::Zap,
+                user.zap_config.amount,
+                nwc.secret,
+                sent.payment_hash,
+                sent.event_id,
+            )?;
+
+            ZapEventToZapConfig::new(conn, event.id, user.zap_config.id)?;
+
+            Ok(())
+        })?;
     } else {
         let truncated: String = content.chars().take(5).collect();
 

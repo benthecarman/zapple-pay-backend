@@ -1,6 +1,7 @@
 use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
 use crate::models::zap_event::ZapEvent;
+use crate::models::zap_event_to_subscription_config::ZapEventToSubscriptionConfig;
 use crate::models::{schema, ConfigType};
 use crate::profile_handler::SentInvoice;
 use crate::LnUrlCacheResult;
@@ -157,7 +158,7 @@ pub async fn start_subscription_handler(
                 let from_user = user_keys.get(&sub.user_id).unwrap();
                 let to_npub = sub.to_npub();
                 // save to db
-                ZapEvent::create_zap_event(
+                let event = ZapEvent::create_zap_event(
                     conn,
                     from_user,
                     &to_npub,
@@ -167,6 +168,8 @@ pub async fn start_subscription_handler(
                     sent.payment_hash,
                     sent.event_id,
                 )?;
+
+                ZapEventToSubscriptionConfig::new(conn, event.id, sub.id)?;
             }
 
             // update last_paid

@@ -144,4 +144,10 @@ impl SubscriptionConfig {
             Ok(configs)
         })
     }
+
+    pub fn delete_by_id(conn: &mut PgConnection, id: i32) -> anyhow::Result<()> {
+        diesel::delete(subscription_configs::table.filter(subscription_configs::id.eq(id)))
+            .execute(conn)?;
+        Ok(())
+    }
 }

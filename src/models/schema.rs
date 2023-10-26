@@ -57,6 +57,20 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    zap_events_to_subscription_configs (zap_event_id, subscription_config_id) {
+        zap_event_id -> Int4,
+        subscription_config_id -> Int4,
+    }
+}
+
+diesel::table! {
+    zap_events_to_zap_configs (zap_event_id, zap_config_id) {
+        zap_event_id -> Int4,
+        zap_config_id -> Int4,
+    }
+}
+
 diesel::joinable!(donations -> zap_configs (config_id));
 diesel::joinable!(subscription_configs -> users (user_id));
 diesel::joinable!(zap_configs -> users (user_id));
@@ -67,4 +81,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     users,
     zap_configs,
     zap_events,
+    zap_events_to_subscription_configs,
+    zap_events_to_zap_configs,
 );

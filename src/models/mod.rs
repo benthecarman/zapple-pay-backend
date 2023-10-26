@@ -19,6 +19,8 @@ pub mod subscription_config;
 pub mod user;
 pub mod zap_config;
 pub mod zap_event;
+pub mod zap_event_to_subscription_config;
+pub mod zap_event_to_zap_config;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 

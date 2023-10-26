@@ -134,4 +134,10 @@ impl ZapConfig {
             .first::<Self>(conn)
             .optional()?)
     }
+
+    pub fn delete_by_id(conn: &mut PgConnection, id: i32) -> anyhow::Result<usize> {
+        let count =
+            diesel::delete(zap_configs::table.filter(zap_configs::id.eq(id))).execute(conn)?;
+        Ok(count)
+    }
 }

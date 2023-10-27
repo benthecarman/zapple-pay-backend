@@ -9,12 +9,15 @@ use bitcoin::XOnlyPublicKey;
 use chrono::{Timelike, Utc};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::{Connection, ExpressionMethods, PgConnection, RunQueryDsl};
+use itertools::Itertools;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::Builder;
 use nostr::Keys;
 use nostr_sdk::Client;
 use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -86,53 +89,79 @@ pub async fn start_subscription_handler(
         // pay users
         let mut futs = Vec::with_capacity(subscriptions.len());
         let total = subscriptions.len();
-        for sub in subscriptions {
-            let from_user = user_keys.get(&sub.user_id).unwrap();
-            let to_npub = sub.to_npub();
-            let lnurl = match lnurls.get(&to_npub) {
-                None => {
-                    println!("No lnurl found for {to_npub}");
-                    continue;
-                }
-                Some(LnUrlCacheResult::Timestamp(_)) => {
-                    println!("Profile with no lnurl found for {to_npub}");
-                    continue;
-                }
-                Some(LnUrlCacheResult::LnUrl((lnurl, _))) => (lnurl.clone(), None),
-                Some(LnUrlCacheResult::MultipleLnUrl((lnurl, lnurl2, _))) => {
-                    (lnurl.clone(), Some(lnurl2.clone()))
-                }
-            };
-            let nwc = sub.nwc();
-            let tried_lnurl = lnurl.0.clone();
-            let keys = keys.clone();
-            let lnurl_client = lnurl_client.clone();
-            let pay_cache = pay_cache.clone();
-            let fut = async move {
-                let amount_msats = sub.amount_msats();
-                match crate::profile_handler::pay_to_lnurl(
-                    &keys,
-                    *from_user,
-                    Some(to_npub),
-                    None,
-                    None,
-                    lnurl,
-                    &lnurl_client,
-                    amount_msats,
-                    nwc,
-                    &pay_cache,
-                )
-                .await
-                {
-                    Err(e) => {
-                        eprintln!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
-                        Err(e)
-                    }
-                    Ok(res) => Ok((res, sub)),
-                }
+
+        let subs_by_relay = subscriptions
+            .into_iter()
+            .sorted_by_key(|s| s.nwc().relay_url)
+            .group_by(|s| s.nwc().relay_url.clone())
+            .into_iter()
+            .map(|(url, subs)| (url, subs.collect::<Vec<_>>()))
+            .collect::<Vec<_>>();
+
+        for (relay, subs) in subs_by_relay {
+            let client = Client::new(&keys);
+
+            let proxy = if relay.host_str().is_some_and(|h| h.ends_with(".onion")) {
+                Some(SocketAddr::from_str("127.0.0.1:9050")?)
+            } else {
+                None
             };
 
-            futs.push(fut);
+            client.add_relay(relay, proxy).await?;
+            client.connect().await;
+
+            for sub in subs {
+                let from_user = user_keys.get(&sub.user_id).unwrap();
+                let to_npub = sub.to_npub();
+                let lnurl = match lnurls.get(&to_npub) {
+                    None => {
+                        println!("No lnurl found for {to_npub}");
+                        continue;
+                    }
+                    Some(LnUrlCacheResult::Timestamp(_)) => {
+                        println!("Profile with no lnurl found for {to_npub}");
+                        continue;
+                    }
+                    Some(LnUrlCacheResult::LnUrl((lnurl, _))) => (lnurl.clone(), None),
+                    Some(LnUrlCacheResult::MultipleLnUrl((lnurl, lnurl2, _))) => {
+                        (lnurl.clone(), Some(lnurl2.clone()))
+                    }
+                };
+                let nwc = sub.nwc();
+                let tried_lnurl = lnurl.0.clone();
+                let keys = keys.clone();
+                let lnurl_client = lnurl_client.clone();
+                let pay_cache = pay_cache.clone();
+                let client = client.clone();
+                let fut = async move {
+                    let amount_msats = sub.amount_msats();
+                    match crate::profile_handler::pay_to_lnurl(
+                        &keys,
+                        *from_user,
+                        Some(to_npub),
+                        None,
+                        None,
+                        lnurl,
+                        &lnurl_client,
+                        amount_msats,
+                        nwc,
+                        &pay_cache,
+                        Some(client),
+                    )
+                    .await
+                    {
+                        Err(e) => {
+                            eprintln!(
+                                "Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}"
+                            );
+                            Err(e)
+                        }
+                        Ok(res) => Ok((res, sub)),
+                    }
+                };
+
+                futs.push(fut);
+            }
         }
         let successful: Vec<(SentInvoice, SubscriptionConfig)> = futures::future::join_all(futs)
             .await

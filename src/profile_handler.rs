@@ -269,6 +269,7 @@ pub async fn pay_to_lnurl(
     amount_msats: u64,
     nwc: NostrWalletConnectURI,
     pay_cache: &Mutex<HashMap<LnUrl, PayResponse>>,
+    client: Option<Client>,
 ) -> anyhow::Result<SentInvoice> {
     let invoice = match get_invoice_from_lnurl(
         keys,
@@ -310,26 +311,34 @@ pub async fn pay_to_lnurl(
 
     let event = create_nwc_request(&nwc, invoice.to_string());
 
-    let keys = Keys::new(nwc.secret);
-    let client = Client::new(&keys);
-
-    let proxy = if nwc
-        .relay_url
-        .host_str()
-        .is_some_and(|h| h.ends_with(".onion"))
-    {
-        Some(SocketAddr::from_str("127.0.0.1:9050")?)
-    } else {
-        None
-    };
-
     let sent = SentInvoice {
         payment_hash: invoice.payment_hash().into_inner(),
         event_id: event.id,
     };
 
-    client.add_relay(&nwc.relay_url, proxy).await?;
-    client.connect().await;
+    let client = match client {
+        Some(client) => client,
+        None => {
+            let keys = Keys::new(nwc.secret);
+            let client = Client::new(&keys);
+
+            let proxy = if nwc
+                .relay_url
+                .host_str()
+                .is_some_and(|h| h.ends_with(".onion"))
+            {
+                Some(SocketAddr::from_str("127.0.0.1:9050")?)
+            } else {
+                None
+            };
+
+            client.add_relay(&nwc.relay_url, proxy).await?;
+            client.connect().await;
+
+            client
+        }
+    };
+
     client.send_event(event).await?;
     client.disconnect().await?;
 

@@ -461,6 +461,7 @@ async fn pay_user(
             user.zap_config.amount_msats(),
             nwc.clone(),
             &pay_cache,
+            None,
         )
         .await?;
         // pay donations too
@@ -487,6 +488,7 @@ async fn pay_user(
                 donation.amount_msats(),
                 nwc.clone(),
                 &pay_cache,
+                None,
             ));
         }
         futures::future::join_all(futs).await;

@@ -316,8 +316,8 @@ pub async fn pay_to_lnurl(
         event_id: event.id,
     };
 
-    let client = match client {
-        Some(client) => client,
+    match client {
+        Some(client) => client.send_event(event).await?,
         None => {
             let keys = Keys::new(nwc.secret);
             let client = Client::new(&keys);
@@ -335,12 +335,12 @@ pub async fn pay_to_lnurl(
             client.add_relay(&nwc.relay_url, proxy).await?;
             client.connect().await;
 
-            client
+            let id = client.send_event(event).await?;
+            client.disconnect().await?;
+
+            id
         }
     };
-
-    client.send_event(event).await?;
-    client.disconnect().await?;
 
     println!("Sent event to {}", nwc.relay_url);
     Ok(sent)

@@ -15,6 +15,7 @@ use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
 use diesel_migrations::MigrationHarness;
 use lnurl::lnurl::LnUrl;
+use log::{error, info};
 use nostr::key::{SecretKey, XOnlyPublicKey};
 use nostr::{Keys, SECP256K1};
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,7 @@ pub struct State {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    pretty_env_logger::try_init()?;
     let config: Config = Config::parse();
 
     // Create the datadir if it doesn't exist
@@ -109,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("Failed to parse bind/port for webserver");
 
-    println!("Webserver running on http://{addr}");
+    info!("Webserver running on http://{addr}");
 
     let server_router = Router::new()
         .route("/set-user", post(set_user_config))
@@ -170,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                eprintln!("listener error: {e}")
+                error!("listener error: {e}")
             }
         }
     });
@@ -186,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                eprintln!("subscription handler error: {e}")
+                error!("subscription handler error: {e}")
             }
         }
     });
@@ -199,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Await the server to receive the shutdown signal
     if let Err(e) = graceful.await {
-        eprintln!("shutdown error: {}", e);
+        error!("shutdown error: {}", e);
     }
 
     Ok(())

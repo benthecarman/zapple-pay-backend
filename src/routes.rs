@@ -10,6 +10,7 @@ use chrono::{Datelike, Duration, NaiveDateTime, Timelike, Utc};
 use diesel::{Connection, PgConnection};
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
+use log::*;
 use nostr::hashes::hex::ToHex;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
@@ -21,7 +22,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
-    eprintln!("Error: {:?}", err);
+    error!("Error: {:?}", err);
     (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"))
 }
 
@@ -237,7 +238,7 @@ async fn send_config_dm(
     let content = format!("You have configured Zapple Pay to zap {amt} {sats} anytime you react to a note with a {emoji} emoji!");
 
     let event_id = client.send_direct_msg(npub, content, None).await?;
-    println!("Sent DM: {}", event_id);
+    debug!("Sent DM: {}", event_id);
     client.disconnect().await?;
 
     Ok(())
@@ -264,7 +265,7 @@ async fn send_subscription_dm(
     );
 
     let event_id = client.send_direct_msg(npub, content, None).await?;
-    println!("Sent DM: {event_id}");
+    debug!("Sent DM: {event_id}");
     client.disconnect().await?;
 
     Ok(())
@@ -286,7 +287,7 @@ async fn send_deleted_config_dm(
         format!("You have deleted your Zapple Pay config for reactions with a {emoji} emoji!");
 
     let event_id = client.send_direct_msg(npub, content, None).await?;
-    println!("Sent DM: {event_id}");
+    debug!("Sent DM: {event_id}");
     client.disconnect().await?;
 
     Ok(())
@@ -310,7 +311,7 @@ async fn send_deleted_subscription_dm(
     );
 
     let event_id = client.send_direct_msg(npub, content, None).await?;
-    println!("Sent DM: {event_id}");
+    debug!("Sent DM: {event_id}");
     client.disconnect().await?;
 
     Ok(())
@@ -327,7 +328,7 @@ async fn send_deleted_user_dm(keys: Keys, npub: XOnlyPublicKey) -> anyhow::Resul
     let content = String::from("You have deleted your Zapple Pay account.");
 
     let event_id = client.send_direct_msg(npub, content, None).await?;
-    println!("Sent DM: {event_id}");
+    debug!("Sent DM: {event_id}");
     client.disconnect().await?;
 
     Ok(())
@@ -353,7 +354,7 @@ pub(crate) async fn set_user_config_impl(
     drop(conn);
 
     let npub_hex = npub.to_hex();
-    println!("New user: {npub_hex} {emoji_str} {amt}!");
+    info!("New user: {npub_hex} {emoji_str} {amt}!");
     // notify new pubkey
     let keys = state.pubkey_channel.lock().await;
     keys.send_if_modified(|current| {
@@ -423,7 +424,7 @@ pub(crate) async fn create_user_subscription_impl(
 
     let npub_hex = npub.to_hex();
     let to_npub_hex = to_npub.to_hex();
-    println!("New subscription: {npub_hex} -> {to_npub_hex} {amt} every {period}!");
+    info!("New subscription: {npub_hex} -> {to_npub_hex} {amt} every {period}!");
 
     #[cfg(not(test))]
     {

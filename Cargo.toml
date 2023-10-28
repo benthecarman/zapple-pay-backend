@@ -8,6 +8,8 @@ name = "zapple-pay"
 path = "src/main.rs"
 
 [dependencies]
+log = "=0.4.18"
+pretty_env_logger = "0.5.0"
 anyhow = "1.0"
 axum = "0.6.16"
 bitcoin = "0.29.2"

@@ -13,6 +13,7 @@ use itertools::Itertools;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::Builder;
+use log::*;
 use nostr::Keys;
 use nostr_sdk::Client;
 use std::collections::HashMap;
@@ -31,7 +32,7 @@ pub async fn start_subscription_handler(
 ) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_async()?;
 
-    println!("Starting subscription handler..");
+    info!("Starting subscription handler..");
 
     loop {
         let start = Utc::now();
@@ -50,7 +51,7 @@ pub async fn start_subscription_handler(
         })?;
         drop(conn);
 
-        println!("Found {} subscriptions", subscriptions.len());
+        info!("Found {} subscriptions", subscriptions.len());
 
         if subscriptions.is_empty() {
             sleep_until_next_min(start.second()).await;
@@ -115,11 +116,11 @@ pub async fn start_subscription_handler(
                 let to_npub = sub.to_npub();
                 let lnurl = match lnurls.get(&to_npub) {
                     None => {
-                        println!("No lnurl found for {to_npub}");
+                        debug!("No lnurl found for {to_npub}");
                         continue;
                     }
                     Some(LnUrlCacheResult::Timestamp(_)) => {
-                        println!("Profile with no lnurl found for {to_npub}");
+                        debug!("Profile with no lnurl found for {to_npub}");
                         continue;
                     }
                     Some(LnUrlCacheResult::LnUrl((lnurl, _))) => (lnurl.clone(), None),
@@ -151,9 +152,7 @@ pub async fn start_subscription_handler(
                     .await
                     {
                         Err(e) => {
-                            eprintln!(
-                                "Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}"
-                            );
+                            error!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
                             Err(e)
                         }
                         Ok(res) => Ok((res, sub)),
@@ -173,7 +172,7 @@ pub async fn start_subscription_handler(
 
         if successful.is_empty() {
             if num_failed > 0 {
-                println!("Failed to pay {num_failed} subscriptions");
+                warn!("Failed to pay {num_failed} subscriptions");
             }
 
             sleep_until_next_min(start.second()).await;
@@ -219,10 +218,10 @@ pub async fn start_subscription_handler(
         drop(conn);
 
         if num_successful > 0 {
-            println!("Successfully paid {num_successful} subscriptions");
+            info!("Successfully paid {num_successful} subscriptions");
         }
         if num_failed > 0 {
-            println!("Failed to pay {num_failed} subscriptions");
+            warn!("Failed to pay {num_failed} subscriptions");
         }
 
         sleep_until_next_min(start.second()).await;
@@ -241,6 +240,6 @@ async fn sleep_until_next_min(start_second: u32) {
     let start = now + chrono::Duration::seconds(60 - now.second() as i64);
     let start = start.with_nanosecond(0).unwrap();
     let sleep_duration = (start - now).num_seconds() as u64 + 1; // add 1 second to be safe
-    println!("Sleeping for {sleep_duration} seconds..");
+    debug!("Sleeping for {sleep_duration} seconds..");
     tokio::time::sleep(Duration::from_secs(sleep_duration)).await;
 }

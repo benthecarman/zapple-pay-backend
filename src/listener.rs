@@ -14,6 +14,7 @@ use diesel::{Connection, PgConnection};
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
+use log::*;
 use nostr::hashes::sha256;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NIP47Error, Response, ResponseResult};
@@ -39,7 +40,7 @@ pub async fn start_listener(
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
-    println!("Using relays: {:?}", relays);
+    debug!("Using relays: {:?}", relays);
     let lnurl_client = Builder::default().build_async()?;
 
     loop {
@@ -90,7 +91,7 @@ pub async fn start_listener(
 
         client.subscribe(vec![reactions, responses]).await;
 
-        println!("Listening for events...");
+        info!("Listening for events...");
 
         let mut notifications = client.notifications();
         loop {
@@ -119,15 +120,15 @@ pub async fn start_listener(
 
                                         match tokio::time::timeout(Duration::from_secs(30), fut).await {
                                             Ok(Ok(_)) => {}
-                                            Ok(Err(e)) => eprintln!("Error: {e}"),
-                                            Err(_) => eprintln!("Timeout"),
+                                            Ok(Err(e)) => error!("Error: {e}"),
+                                            Err(_) => error!("Timeout"),
                                         }
                                     }
                                 });
                             }
                         }
                         RelayPoolNotification::Shutdown => {
-                            println!("Relay pool shutdown");
+                            warn!("Relay pool shutdown");
                             break;
                         }
                         RelayPoolNotification::Stop => {}
@@ -218,7 +219,7 @@ async fn handle_nwc_response(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
     event: Event,
 ) -> anyhow::Result<()> {
-    println!("Received nwc response: {}", event.id);
+    trace!("Received nwc response: {}", event.id);
 
     let mut tags = event.tags.clone();
     tags.reverse();
@@ -241,7 +242,7 @@ async fn handle_nwc_response(
 
     let content = decrypt(&zap_event.secret_key(), &event.pubkey, event.content)?;
     let response: ResponseNoType = serde_json::from_str(&content).map_err(|e| {
-        eprintln!("Error parsing response: {content}");
+        error!("Error parsing response: {content}");
         e
     })?;
     let response = response.into_response()?;
@@ -266,7 +267,7 @@ async fn handle_nwc_response(
                                 ZapEventToZapConfig::find_by_zap_event_id(conn, event.id)?
                             {
                                 ZapConfig::delete_by_id(conn, to.zap_config_id)?;
-                                println!("Deleted user's zap config");
+                                info!("Deleted user's zap config");
                             }
                         }
                         ConfigType::Subscription => {
@@ -274,7 +275,7 @@ async fn handle_nwc_response(
                                 ZapEventToSubscriptionConfig::find_by_zap_event_id(conn, event.id)?
                             {
                                 SubscriptionConfig::delete_by_id(conn, to.subscription_config_id)?;
-                                println!("Deleted user's subscription config");
+                                info!("Deleted user's subscription config");
                             }
                         }
                     }
@@ -295,7 +296,7 @@ async fn handle_nwc_response(
         let preimage: [u8; 32] = FromHex::from_hex(&res.preimage)?;
 
         if sha256::Hash::hash(&preimage).to_hex() == zap_event.payment_hash {
-            println!("Payment successful: {}", zap_event.payment_hash);
+            debug!("Payment successful: {}", zap_event.payment_hash);
             ZapEvent::mark_zap_paid(&mut conn, event_id, event.created_at)?;
         } else {
             return Err(anyhow!("Invalid preimage"));
@@ -440,7 +441,7 @@ async fn pay_user(
 
     let mut conn = db_pool.get()?;
     if let Some(user) = crate::models::get_user_zap_config(&mut conn, event.pubkey, content)? {
-        println!(
+        debug!(
             "Received reaction: {} {} {}",
             event.id, event.content, event.pubkey
         );
@@ -510,17 +511,23 @@ async fn pay_user(
 
             Ok(())
         })?;
+
+        info!(
+            "Successful reaction: {} {} {}",
+            event.id, event.content, event.pubkey
+        );
     } else {
-        let truncated: String = content.chars().take(5).collect();
+        if log_enabled!(Level::Debug) {
+            let truncated: String = content.chars().take(5).collect();
+            // if we truncated, add ...
+            if content != truncated {
+                debug!("Config not found: {} {}…", event.pubkey, truncated)
+            } else {
+                debug!("Config not found: {} {}", event.pubkey, truncated)
+            };
+        }
 
-        // if we truncated, add ...
-        let err = if content != truncated {
-            anyhow!("Config not found: {} {}…", event.pubkey, truncated)
-        } else {
-            anyhow!("Config not found: {} {}", event.pubkey, truncated)
-        };
-
-        return Err(err);
+        return Ok(());
     }
 
     Ok(())

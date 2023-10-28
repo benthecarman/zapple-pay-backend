@@ -9,6 +9,7 @@ use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::LnUrlResponse::LnUrlPayResponse;
 use lnurl::{AsyncClient, Builder};
+use log::*;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{encrypt, PayInvoiceRequestParams, ToBech32};
 use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
@@ -59,7 +60,7 @@ pub async fn get_user_lnurl(
     let lnurl = match cache_result {
         Some(lnurl) => lnurl,
         None => {
-            println!("No lnurl in cache, fetching...");
+            debug!("No lnurl in cache, fetching...");
 
             let mut metadata_filter = Filter::new()
                 .kind(Kind::Metadata)
@@ -162,7 +163,7 @@ async fn get_invoice_from_lnurl(
         match cache_result {
             Some(pay) => pay,
             None => {
-                println!("No pay in cache, fetching...");
+                debug!("No pay in cache, fetching...");
                 let resp = if lnurl.url.contains(".onion") {
                     let client = Builder::default().proxy("127.0.0.1:9050").build_async()?;
                     tokio::time::timeout(Duration::from_secs(30), client.make_request(&lnurl.url))
@@ -342,7 +343,7 @@ pub async fn pay_to_lnurl(
         }
     };
 
-    println!("Sent event to {}", nwc.relay_url);
+    debug!("Sent event to {}", nwc.relay_url);
     Ok(sent)
 }
 

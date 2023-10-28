@@ -145,6 +145,17 @@ impl SubscriptionConfig {
         })
     }
 
+    pub fn get_to_npubs(conn: &mut PgConnection) -> anyhow::Result<Vec<XOnlyPublicKey>> {
+        let strings = subscription_configs::table
+            .select(subscription_configs::to_npub)
+            .load::<String>(conn)?;
+
+        Ok(strings
+            .into_iter()
+            .filter_map(|s| XOnlyPublicKey::from_str(&s).ok())
+            .collect())
+    }
+
     pub fn delete_by_id(conn: &mut PgConnection, id: i32) -> anyhow::Result<()> {
         diesel::delete(subscription_configs::table.filter(subscription_configs::id.eq(id)))
             .execute(conn)?;

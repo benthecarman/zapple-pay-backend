@@ -83,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut secrets = ZapConfig::get_nwc_secrets(&mut connection)?;
     let subscription_secrets = SubscriptionConfig::get_nwc_secrets(&mut connection)?;
+    let subscription_to_npubs = SubscriptionConfig::get_to_npubs(&mut connection)?;
     secrets.extend(subscription_secrets);
     secrets.sort();
     secrets.dedup();
@@ -174,6 +175,23 @@ async fn main() -> anyhow::Result<()> {
             {
                 error!("listener error: {e}")
             }
+        }
+    });
+
+    let relays = config.relay.clone();
+    let _keys = keys.clone();
+    let cache = lnurl_cache.clone();
+    tokio::spawn(async move {
+        match subscription_handler::populate_lnurl_cache(
+            subscription_to_npubs,
+            &relays,
+            _keys.server_keys(),
+            cache,
+        )
+        .await
+        {
+            Ok(_) => info!("populated lnurl cache"),
+            Err(e) => error!("populate lnurl cache error: {e}"),
         }
     });
 

@@ -58,12 +58,6 @@ pub async fn start_subscription_handler(
             continue;
         }
 
-        let client = Client::new(&keys);
-        for relay in relays.iter() {
-            client.add_relay(relay.as_str(), None).await?;
-        }
-        client.connect().await;
-
         // get unique to_npubs
         let mut to_npubs = subscriptions
             .iter()
@@ -73,14 +67,7 @@ pub async fn start_subscription_handler(
         to_npubs.dedup();
 
         // populate lnurl cache
-        let mut futs = Vec::with_capacity(subscriptions.len());
-        for to_npub in to_npubs {
-            let fut = crate::profile_handler::get_user_lnurl(to_npub, &lnurl_cache, &client);
-            futs.push(fut);
-        }
-        futures::future::join_all(futs).await;
-
-        client.disconnect().await?;
+        populate_lnurl_cache(to_npubs, &relays, keys.clone(), lnurl_cache.clone()).await?;
 
         let lnurls = {
             let cache = lnurl_cache.lock().await;
@@ -242,4 +229,29 @@ async fn sleep_until_next_min(start_second: u32) {
     let sleep_duration = (start - now).num_seconds() as u64 + 1; // add 1 second to be safe
     debug!("Sleeping for {sleep_duration} seconds..");
     tokio::time::sleep(Duration::from_secs(sleep_duration)).await;
+}
+
+pub async fn populate_lnurl_cache(
+    to_npubs: Vec<XOnlyPublicKey>,
+    relays: &[String],
+    keys: Keys,
+    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+) -> anyhow::Result<()> {
+    let client = Client::new(&keys);
+    for relay in relays.iter() {
+        client.add_relay(relay.as_str(), None).await?;
+    }
+    client.connect().await;
+
+    // populate lnurl cache
+    let mut futs = Vec::with_capacity(to_npubs.len());
+    for to_npub in to_npubs {
+        let fut = crate::profile_handler::get_user_lnurl(to_npub, &lnurl_cache, &client);
+        futs.push(fut);
+    }
+    futures::future::join_all(futs).await;
+
+    client.disconnect().await?;
+
+    Ok(())
 }

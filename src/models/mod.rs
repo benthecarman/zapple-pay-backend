@@ -75,7 +75,7 @@ pub fn upsert_user(conn: &mut PgConnection, config: SetUserConfig) -> anyhow::Re
             user_id,
             emoji: &config.emoji(),
             amount: config.amount_sats as i32,
-            nwc: &config.nwc().to_string(),
+            nwc: &config.nwc.unwrap().to_string(),
         };
 
         let config_id: i32 = diesel::insert_into(schema::zap_configs::table)
@@ -136,7 +136,7 @@ pub fn upsert_subscription(
             to_npub: &config.to_npub.to_hex(),
             amount: config.amount_sats as i32,
             time_period: &config.time_period.to_string(),
-            nwc: &config.nwc().to_string(),
+            nwc: &config.nwc.unwrap().to_string(),
             last_paid: None,
         };
 

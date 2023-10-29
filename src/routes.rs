@@ -36,8 +36,8 @@ pub struct UserConfigs {
 pub struct SetUserConfig {
     pub npub: XOnlyPublicKey,
     pub amount_sats: u64,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    nwc: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nwc: Option<NostrWalletConnectURI>,
     pub emoji: Option<String>,
     pub donations: Option<Vec<DonationConfig>>,
 }
@@ -48,8 +48,8 @@ impl SetUserConfig {
             return Err(anyhow::anyhow!("Invalid amount"));
         }
 
-        if NostrWalletConnectURI::from_str(&self.nwc).is_err() {
-            return Err(anyhow::anyhow!("Invalid nwc"));
+        if self.nwc.is_none() {
+            return Err(anyhow::anyhow!("Missing nwc"));
         }
 
         // verify donations have a valid lnurl / lightning address / npub
@@ -66,10 +66,6 @@ impl SetUserConfig {
 
     pub fn emoji(&self) -> String {
         self.emoji.clone().unwrap_or("⚡".to_string())
-    }
-
-    pub fn nwc(&self) -> NostrWalletConnectURI {
-        NostrWalletConnectURI::from_str(&self.nwc).unwrap()
     }
 }
 
@@ -195,8 +191,8 @@ pub struct CreateUserSubscription {
     pub to_npub: XOnlyPublicKey,
     pub amount_sats: u64,
     pub time_period: SubscriptionPeriod,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    nwc: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nwc: Option<NostrWalletConnectURI>,
 }
 
 impl CreateUserSubscription {
@@ -205,7 +201,7 @@ impl CreateUserSubscription {
             return Err(anyhow::anyhow!("Invalid amount"));
         }
 
-        if NostrWalletConnectURI::from_str(&self.nwc).is_err() {
+        if self.nwc.is_none() {
             return Err(anyhow::anyhow!("Invalid nwc"));
         }
 
@@ -214,10 +210,6 @@ impl CreateUserSubscription {
         }
 
         Ok(())
-    }
-
-    pub fn nwc(&self) -> NostrWalletConnectURI {
-        NostrWalletConnectURI::from_str(&self.nwc).unwrap()
     }
 }
 
@@ -348,7 +340,13 @@ pub(crate) async fn set_user_config_impl(
 
     let npub = payload.npub;
     let amt = payload.amount_sats;
-    let secret_key_pk = payload.nwc().secret.x_only_public_key(SECP256K1).0;
+    let secret_key_pk = payload
+        .nwc
+        .as_ref()
+        .unwrap()
+        .secret
+        .x_only_public_key(SECP256K1)
+        .0;
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_user(&mut conn, payload)?;
     drop(conn);
@@ -406,7 +404,13 @@ pub(crate) async fn create_user_subscription_impl(
     let to_npub = payload.to_npub;
     let amt = payload.amount_sats;
     let period = payload.time_period;
-    let secret_key_pk = payload.nwc().secret.x_only_public_key(SECP256K1).0;
+    let secret_key_pk = payload
+        .nwc
+        .as_ref()
+        .unwrap()
+        .secret
+        .x_only_public_key(SECP256K1)
+        .0;
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_subscription(&mut conn, payload)?;
     drop(conn);
@@ -472,7 +476,7 @@ pub(crate) fn get_user_config_impl(
             SetUserConfig {
                 npub,
                 amount_sats: user.zap_config.amount as u64,
-                nwc: "".to_string(), // don't return the nwc
+                nwc: None, // don't return the nwc
                 emoji: Some(user.zap_config.emoji),
                 donations,
             }
@@ -525,7 +529,7 @@ pub(crate) fn get_user_configs_impl(
                 SetUserConfig {
                     npub,
                     amount_sats: user.zap_config.amount as u64,
-                    nwc: "".to_string(), // don't return the nwc
+                    nwc: None, // don't return the nwc
                     emoji: Some(user.zap_config.emoji),
                     donations,
                 }
@@ -540,7 +544,7 @@ pub(crate) fn get_user_configs_impl(
             to_npub: c.to_npub(),
             amount_sats: c.amount as u64,
             time_period: c.time_period(),
-            nwc: "".to_string(),
+            nwc: None,
         })
         .collect();
 
@@ -578,7 +582,7 @@ pub(crate) fn get_user_subscriptions_impl(
             to_npub: c.to_npub(),
             amount_sats: c.amount as u64,
             time_period: c.time_period(),
-            nwc: "".to_string(),
+            nwc: None,
         })
         .collect();
 
@@ -619,7 +623,7 @@ pub(crate) fn get_user_subscription_impl(
         to_npub: c.to_npub(),
         amount_sats: c.amount as u64,
         time_period: c.time_period(),
-        nwc: "".to_string(),
+        nwc: None,
     }))
 }
 
@@ -884,11 +888,12 @@ mod test {
         clear_database(&state);
 
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 
         let payload = SetUserConfig {
             npub,
             amount_sats: 21,
-            nwc: NWC.to_string(),
+            nwc: Some(nwc),
             emoji: None,
             donations: None,
         };
@@ -914,6 +919,7 @@ mod test {
         clear_database(&state);
 
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 
         let emojis = ["⚡️", "🤙", "👍", "❤️", "🫂"];
 
@@ -921,7 +927,7 @@ mod test {
             let payload = SetUserConfig {
                 npub,
                 amount_sats: 21,
-                nwc: NWC.to_string(),
+                nwc: Some(nwc.clone()),
                 emoji: Some(emoji.to_string()),
                 donations: None,
             };
@@ -940,12 +946,14 @@ mod test {
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
         let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
 
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+
         let payload = CreateUserSubscription {
             npub,
             to_npub,
             amount_sats: 21,
             time_period: SubscriptionPeriod::Day,
-            nwc: NWC.to_string(),
+            nwc: Some(nwc),
         };
 
         let current = create_user_subscription_impl(payload, &state)
@@ -971,12 +979,13 @@ mod test {
         clear_database(&state);
 
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
         let emoji = "⚡";
 
         let payload = SetUserConfig {
             npub,
             amount_sats: 21,
-            nwc: NWC.to_string(),
+            nwc: Some(nwc),
             emoji: None,
             donations: None,
         };
@@ -1010,12 +1019,14 @@ mod test {
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
         let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
 
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+
         let payload = CreateUserSubscription {
             npub,
             to_npub,
             amount_sats: 21,
             time_period: SubscriptionPeriod::Hour,
-            nwc: NWC.to_string(),
+            nwc: Some(nwc),
         };
 
         let current = create_user_subscription_impl(payload, &state)
@@ -1048,12 +1059,14 @@ mod test {
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
         let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
 
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+
         let payload = CreateUserSubscription {
             npub,
             to_npub,
             amount_sats: 21,
             time_period: SubscriptionPeriod::Year,
-            nwc: NWC.to_string(),
+            nwc: Some(nwc.clone()),
         };
 
         let current = create_user_subscription_impl(payload, &state)
@@ -1076,7 +1089,7 @@ mod test {
             let payload = SetUserConfig {
                 npub,
                 amount_sats: 21,
-                nwc: NWC.to_string(),
+                nwc: Some(nwc.clone()),
                 emoji: Some(emoji.to_string()),
                 donations: None,
             };

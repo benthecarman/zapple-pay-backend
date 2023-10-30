@@ -1,6 +1,7 @@
 use crate::models::donation::{Donation, NewDonation};
 use crate::models::subscription_config::{NewSubscriptionConfig, SubscriptionConfig};
 use crate::models::user::NewUser;
+use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::{NewZapConfig, ZapConfig};
 use crate::routes::{CreateUserSubscription, SetUserConfig};
 use bitcoin::hashes::hex::ToHex;
@@ -17,6 +18,7 @@ pub mod donation;
 pub mod schema;
 pub mod subscription_config;
 pub mod user;
+pub mod wallet_auth;
 pub mod zap_config;
 pub mod zap_event;
 pub mod zap_event_to_subscription_config;
@@ -59,6 +61,12 @@ pub struct UserZapConfig {
 
 pub fn upsert_user(conn: &mut PgConnection, config: SetUserConfig) -> anyhow::Result<()> {
     conn.transaction::<_, Error, _>(|conn| {
+        let auth_index = if let Some(pubkey) = config.auth_id {
+            Some(WalletAuth::get_index_by_pubkey(conn, pubkey)?.ok_or(Error::NotFound)?)
+        } else {
+            None
+        };
+
         let user = NewUser {
             npub: &config.npub.to_hex(),
         };
@@ -75,7 +83,8 @@ pub fn upsert_user(conn: &mut PgConnection, config: SetUserConfig) -> anyhow::Re
             user_id,
             emoji: &config.emoji(),
             amount: config.amount_sats as i32,
-            nwc: &config.nwc.unwrap().to_string(),
+            nwc: config.nwc.map(|x| x.to_string()),
+            auth_index,
         };
 
         let config_id: i32 = diesel::insert_into(schema::zap_configs::table)
@@ -119,6 +128,12 @@ pub fn upsert_subscription(
     config: CreateUserSubscription,
 ) -> anyhow::Result<()> {
     conn.transaction::<_, Error, _>(|conn| {
+        let auth_index = if let Some(pubkey) = config.auth_id {
+            Some(WalletAuth::get_index_by_pubkey(conn, pubkey)?.ok_or(Error::NotFound)?)
+        } else {
+            None
+        };
+
         let user = NewUser {
             npub: &config.npub.to_hex(),
         };
@@ -136,7 +151,8 @@ pub fn upsert_subscription(
             to_npub: &config.to_npub.to_hex(),
             amount: config.amount_sats as i32,
             time_period: &config.time_period.to_string(),
-            nwc: &config.nwc.unwrap().to_string(),
+            nwc: config.nwc.map(|x| x.to_string()),
+            auth_index,
             last_paid: None,
         };
 

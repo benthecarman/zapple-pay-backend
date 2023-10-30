@@ -1,12 +1,13 @@
 use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
+use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
-use crate::State;
-use axum::extract::Path;
+use crate::nip49::{NIP49Budget, SubscriptionPeriod, NIP49URI};
+use crate::{State, DEFAULT_AUTH_RELAY};
+use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
-use chrono::{Datelike, Duration, NaiveDateTime, Timelike, Utc};
 use diesel::{Connection, PgConnection};
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
@@ -14,10 +15,12 @@ use log::*;
 use nostr::hashes::hex::ToHex;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
+use nostr::prelude::Method;
 #[cfg(not(test))]
 use nostr::prelude::ToBech32;
 use nostr::{Keys, Url, SECP256K1};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -38,6 +41,8 @@ pub struct SetUserConfig {
     pub amount_sats: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nwc: Option<NostrWalletConnectURI>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_id: Option<XOnlyPublicKey>,
     pub emoji: Option<String>,
     pub donations: Option<Vec<DonationConfig>>,
 }
@@ -48,8 +53,8 @@ impl SetUserConfig {
             return Err(anyhow::anyhow!("Invalid amount"));
         }
 
-        if self.nwc.is_none() {
-            return Err(anyhow::anyhow!("Missing nwc"));
+        if self.nwc.is_some() == self.auth_id.is_some() {
+            return Err(anyhow::anyhow!("Can only have nwc or auth_id"));
         }
 
         // verify donations have a valid lnurl / lightning address / npub
@@ -88,103 +93,6 @@ impl DonationConfig {
     }
 }
 
-pub const ALL_SUBSCRIPTION_PERIODS: [SubscriptionPeriod; 6] = [
-    SubscriptionPeriod::Minute,
-    SubscriptionPeriod::Hour,
-    SubscriptionPeriod::Day,
-    SubscriptionPeriod::Week,
-    SubscriptionPeriod::Month,
-    SubscriptionPeriod::Year,
-];
-
-/// How often a subscription should pay
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SubscriptionPeriod {
-    /// Pays at the top of every minute
-    Minute,
-    /// Pays at the top of every hour
-    Hour,
-    /// Pays daily at midnight
-    Day,
-    /// Pays every week on sunday, midnight
-    Week,
-    /// Pays every month on the first, midnight
-    Month,
-    /// Pays every year on the January 1st, midnight
-    Year,
-}
-
-impl SubscriptionPeriod {
-    pub fn period_start(&self) -> NaiveDateTime {
-        let now = Utc::now();
-        match self {
-            SubscriptionPeriod::Minute => now
-                .date_naive()
-                .and_hms_opt(now.hour(), now.minute(), 0)
-                .unwrap(),
-            SubscriptionPeriod::Hour => now.date_naive().and_hms_opt(now.hour(), 0, 0).unwrap(),
-            SubscriptionPeriod::Day => now.date_naive().and_hms_opt(0, 0, 0).unwrap(),
-            SubscriptionPeriod::Week => (now
-                - Duration::days((now.weekday().num_days_from_sunday()) as i64))
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .unwrap(),
-            SubscriptionPeriod::Month => now
-                .date_naive()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
-            SubscriptionPeriod::Year => NaiveDateTime::new(
-                now.date_naive().with_ordinal(1).unwrap(),
-                chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
-            ),
-        }
-    }
-}
-
-impl Serialize for SubscriptionPeriod {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl<'a> Deserialize<'a> for SubscriptionPeriod {
-    fn deserialize<D: serde::Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        SubscriptionPeriod::from_str(&s).map_err(serde::de::Error::custom)
-    }
-}
-
-impl core::fmt::Display for SubscriptionPeriod {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            SubscriptionPeriod::Minute => write!(f, "minute"),
-            SubscriptionPeriod::Hour => write!(f, "hour"),
-            SubscriptionPeriod::Day => write!(f, "day"),
-            SubscriptionPeriod::Week => write!(f, "week"),
-            SubscriptionPeriod::Month => write!(f, "month"),
-            SubscriptionPeriod::Year => write!(f, "year"),
-        }
-    }
-}
-
-impl FromStr for SubscriptionPeriod {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "minute" => Ok(SubscriptionPeriod::Minute),
-            "hour" => Ok(SubscriptionPeriod::Hour),
-            "day" => Ok(SubscriptionPeriod::Day),
-            "week" => Ok(SubscriptionPeriod::Week),
-            "month" => Ok(SubscriptionPeriod::Month),
-            "year" => Ok(SubscriptionPeriod::Year),
-            _ => Err(anyhow::anyhow!("Invalid SubscriptionPeriod")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateUserSubscription {
     pub npub: XOnlyPublicKey,
@@ -193,6 +101,8 @@ pub struct CreateUserSubscription {
     pub time_period: SubscriptionPeriod,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nwc: Option<NostrWalletConnectURI>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_id: Option<XOnlyPublicKey>,
 }
 
 impl CreateUserSubscription {
@@ -201,8 +111,8 @@ impl CreateUserSubscription {
             return Err(anyhow::anyhow!("Invalid amount"));
         }
 
-        if self.nwc.is_none() {
-            return Err(anyhow::anyhow!("Invalid nwc"));
+        if self.nwc.is_some() == self.auth_id.is_some() {
+            return Err(anyhow::anyhow!("Can only have nwc or auth_id"));
         }
 
         if self.npub == self.to_npub {
@@ -340,13 +250,10 @@ pub(crate) async fn set_user_config_impl(
 
     let npub = payload.npub;
     let amt = payload.amount_sats;
-    let secret_key_pk = payload
-        .nwc
-        .as_ref()
-        .unwrap()
-        .secret
-        .x_only_public_key(SECP256K1)
-        .0;
+    let secret_key_pk = match payload.nwc.as_ref() {
+        Some(nwc) => nwc.secret.x_only_public_key(SECP256K1).0,
+        None => payload.auth_id.unwrap(),
+    };
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_user(&mut conn, payload)?;
     drop(conn);
@@ -404,13 +311,10 @@ pub(crate) async fn create_user_subscription_impl(
     let to_npub = payload.to_npub;
     let amt = payload.amount_sats;
     let period = payload.time_period;
-    let secret_key_pk = payload
-        .nwc
-        .as_ref()
-        .unwrap()
-        .secret
-        .x_only_public_key(SECP256K1)
-        .0;
+    let secret_key_pk = match payload.nwc.as_ref() {
+        Some(nwc) => nwc.secret.x_only_public_key(SECP256K1).0,
+        None => payload.auth_id.unwrap(),
+    };
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_subscription(&mut conn, payload)?;
     drop(conn);
@@ -477,6 +381,7 @@ pub(crate) fn get_user_config_impl(
                 npub,
                 amount_sats: user.zap_config.amount as u64,
                 nwc: None, // don't return the nwc
+                auth_id: None,
                 emoji: Some(user.zap_config.emoji),
                 donations,
             }
@@ -530,6 +435,7 @@ pub(crate) fn get_user_configs_impl(
                     npub,
                     amount_sats: user.zap_config.amount as u64,
                     nwc: None, // don't return the nwc
+                    auth_id: None,
                     emoji: Some(user.zap_config.emoji),
                     donations,
                 }
@@ -545,6 +451,7 @@ pub(crate) fn get_user_configs_impl(
             amount_sats: c.amount as u64,
             time_period: c.time_period(),
             nwc: None,
+            auth_id: None,
         })
         .collect();
 
@@ -583,6 +490,7 @@ pub(crate) fn get_user_subscriptions_impl(
             amount_sats: c.amount as u64,
             time_period: c.time_period(),
             nwc: None,
+            auth_id: None,
         })
         .collect();
 
@@ -624,6 +532,7 @@ pub(crate) fn get_user_subscription_impl(
         amount_sats: c.amount as u64,
         time_period: c.time_period(),
         nwc: None,
+        auth_id: None,
     }))
 }
 
@@ -768,6 +677,45 @@ pub async fn delete_user_subscription(
     }
 }
 
+pub async fn wallet_auth_impl(
+    state: &State,
+    budget: Option<NIP49Budget>,
+) -> anyhow::Result<NIP49URI> {
+    let auth = {
+        let mut conn = state.db_pool.get()?;
+        WalletAuth::create(&mut conn, state.xpriv)?
+    };
+
+    let uri = NIP49URI {
+        public_key: auth.pubkey(),
+        relay_url: Url::parse(DEFAULT_AUTH_RELAY)?,
+        required_commands: vec![Method::PayInvoice],
+        optional_commands: vec![],
+        budget,
+    };
+
+    // notify new auth key
+    let auths = state.auth_channel.lock().await;
+    auths.send_if_modified(|current| {
+        // public_key should be unique, don't need to check for duplicates
+        current.push(auth.pubkey());
+        true
+    });
+
+    Ok(uri)
+}
+
+pub async fn wallet_auth(
+    Extension(state): Extension<State>,
+    payload: Option<Query<NIP49Budget>>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let budget = payload.map(|p| p.0);
+    match wallet_auth_impl(&state, budget).await {
+        Ok(uri) => Ok(Json(json!({"id": uri.public_key.to_hex(), "uri": uri}))),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Counts {
     users: i64,
@@ -828,6 +776,7 @@ mod test {
     use crate::models::MIGRATIONS;
     use crate::routes::*;
     use crate::State;
+    use bitcoin::util::bip32::ExtendedPrivKey;
     use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::{PgConnection, RunQueryDsl};
     use diesel_migrations::MigrationHarness;
@@ -858,13 +807,18 @@ mod test {
         let pubkey_channel = Arc::new(Mutex::new(tx));
         let (tx, _) = watch::channel(vec![]);
         let secret_channel = Arc::new(Mutex::new(tx));
+        let (tx, _) = watch::channel(vec![]);
+        let auth_channel = Arc::new(Mutex::new(tx));
         let server_keys = Keys::generate();
+        let xpriv = ExtendedPrivKey::new_master(bitcoin::Network::Testnet, &[]).unwrap();
 
         State {
             db_pool,
             pubkey_channel,
             secret_channel,
+            auth_channel,
             server_keys,
+            xpriv,
         }
     }
 
@@ -894,6 +848,7 @@ mod test {
             npub,
             amount_sats: 21,
             nwc: Some(nwc),
+            auth_id: None,
             emoji: None,
             donations: None,
         };
@@ -914,6 +869,33 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_create_config_with_auth() {
+        let state = init_state();
+        clear_database(&state);
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+
+        let uri = wallet_auth_impl(&state, None).await.unwrap();
+
+        // set dummy pubkey
+        WalletAuth::add_pubkey(&mut state.db_pool.get().unwrap(), uri.public_key, npub).unwrap();
+
+        let payload = SetUserConfig {
+            npub,
+            amount_sats: 21,
+            nwc: None,
+            auth_id: Some(uri.public_key),
+            emoji: None,
+            donations: None,
+        };
+
+        let current = set_user_config_impl(payload, &state).await.unwrap();
+        assert_eq!(current.zaps.len(), 1);
+
+        clear_database(&state);
+    }
+
+    #[tokio::test]
     async fn test_create_config_emojis() {
         let state = init_state();
         clear_database(&state);
@@ -928,6 +910,7 @@ mod test {
                 npub,
                 amount_sats: 21,
                 nwc: Some(nwc.clone()),
+                auth_id: None,
                 emoji: Some(emoji.to_string()),
                 donations: None,
             };
@@ -954,6 +937,7 @@ mod test {
             amount_sats: 21,
             time_period: SubscriptionPeriod::Day,
             nwc: Some(nwc),
+            auth_id: None,
         };
 
         let current = create_user_subscription_impl(payload, &state)
@@ -986,6 +970,7 @@ mod test {
             npub,
             amount_sats: 21,
             nwc: Some(nwc),
+            auth_id: None,
             emoji: None,
             donations: None,
         };
@@ -1027,6 +1012,7 @@ mod test {
             amount_sats: 21,
             time_period: SubscriptionPeriod::Hour,
             nwc: Some(nwc),
+            auth_id: None,
         };
 
         let current = create_user_subscription_impl(payload, &state)
@@ -1067,6 +1053,7 @@ mod test {
             amount_sats: 21,
             time_period: SubscriptionPeriod::Year,
             nwc: Some(nwc.clone()),
+            auth_id: None,
         };
 
         let current = create_user_subscription_impl(payload, &state)
@@ -1090,6 +1077,7 @@ mod test {
                 npub,
                 amount_sats: 21,
                 nwc: Some(nwc.clone()),
+                auth_id: None,
                 emoji: Some(emoji.to_string()),
                 donations: None,
             };

@@ -17,9 +17,10 @@ diesel::table! {
         to_npub -> Text,
         amount -> Int4,
         time_period -> Text,
-        nwc -> Text,
+        nwc -> Nullable<Text>,
         created_at -> Timestamptz,
         last_paid -> Nullable<Timestamptz>,
+        auth_index -> Nullable<Int4>,
     }
 }
 
@@ -32,13 +33,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    wallet_auth (index) {
+        index -> Int4,
+        pubkey -> Text,
+        user_pubkey -> Nullable<Text>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     zap_configs (id) {
         id -> Int4,
         user_id -> Int4,
         emoji -> Text,
         amount -> Int4,
-        nwc -> Text,
+        nwc -> Nullable<Text>,
         created_at -> Timestamptz,
+        auth_index -> Nullable<Int4>,
     }
 }
 
@@ -73,12 +84,15 @@ diesel::table! {
 
 diesel::joinable!(donations -> zap_configs (config_id));
 diesel::joinable!(subscription_configs -> users (user_id));
+diesel::joinable!(subscription_configs -> wallet_auth (auth_index));
 diesel::joinable!(zap_configs -> users (user_id));
+diesel::joinable!(zap_configs -> wallet_auth (auth_index));
 
 diesel::allow_tables_to_appear_in_same_query!(
     donations,
     subscription_configs,
     users,
+    wallet_auth,
     zap_configs,
     zap_events,
     zap_events_to_subscription_configs,

@@ -1,14 +1,17 @@
 use crate::models::subscription_config::SubscriptionConfig;
+use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
 use crate::models::zap_event_to_subscription_config::ZapEventToSubscriptionConfig;
 use crate::models::zap_event_to_zap_config::ZapEventToZapConfig;
 use crate::models::ConfigType;
+use crate::nip49::NIP49Confirmation;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
 use crate::LnUrlCacheResult;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::Hash;
+use bitcoin::util::bip32::{ChildNumber, ExtendedPrivKey};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::{Connection, PgConnection};
 use lnurl::lnurl::LnUrl;
@@ -19,7 +22,7 @@ use nostr::hashes::sha256;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::{Method, NIP47Error, Response, ResponseResult};
 use nostr::prelude::{decrypt, ErrorCode};
-use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp};
+use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp, SECP256K1};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -36,7 +39,9 @@ pub async fn start_listener(
     db_pool: Pool<ConnectionManager<PgConnection>>,
     mut pubkey_receiver: Receiver<Vec<String>>,
     mut secret_receiver: Receiver<Vec<XOnlyPublicKey>>,
+    mut auth_receiver: Receiver<Vec<XOnlyPublicKey>>,
     keys: Keys,
+    xpriv: ExtendedPrivKey,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
@@ -72,11 +77,14 @@ pub async fn start_listener(
         let tagged: Vec<XOnlyPublicKey> = secret_receiver.borrow().clone();
         let authors: Vec<String> = pubkey_receiver.borrow().clone();
 
+        let auth_keys: Vec<XOnlyPublicKey> = auth_receiver.borrow().clone();
+
         let kinds = vec![
             Kind::Reaction,
             Kind::TextNote,
             Kind::Regular(1311),
             Kind::WalletConnectResponse,
+            Kind::Replaceable(13193),
         ];
 
         let reactions = Filter::new()
@@ -89,7 +97,12 @@ pub async fn start_listener(
             .pubkeys(tagged)
             .since(Timestamp::now());
 
-        client.subscribe(vec![reactions, responses]).await;
+        let auth = Filter::new()
+            .kind(Kind::Replaceable(13193))
+            .pubkeys(auth_keys)
+            .since(Timestamp::now());
+
+        client.subscribe(vec![reactions, responses, auth]).await;
 
         info!("Listening for events...");
 
@@ -114,6 +127,7 @@ pub async fn start_listener(
                                             &lnurl_client,
                                             event,
                                             &keys,
+                                            xpriv,
                                             lnurl_cache.clone(),
                                             pay_cache.clone(),
                                         );
@@ -141,6 +155,14 @@ pub async fn start_listener(
                 _ = secret_receiver.changed() => {
                     break;
                 }
+                _ = auth_receiver.changed() => {
+                    let auth_keys: Vec<XOnlyPublicKey> = auth_receiver.borrow().clone();
+                    let auth = Filter::new()
+                        .kind(Kind::Replaceable(13193))
+                        .pubkeys(auth_keys)
+                        .since(Timestamp::now());
+                    client.subscribe(vec![auth]).await;
+                }
             }
         }
 
@@ -154,10 +176,12 @@ async fn handle_event(
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
+    xpriv: ExtendedPrivKey,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     match event.kind {
+        Kind::Replaceable(13193) => handle_auth_response(db_pool, xpriv, event).await,
         Kind::WalletConnectResponse => handle_nwc_response(db_pool, event).await,
         Kind::TextNote | Kind::Reaction => {
             handle_reaction(
@@ -166,6 +190,7 @@ async fn handle_event(
                 lnurl_client,
                 event,
                 keys,
+                xpriv,
                 lnurl_cache,
                 pay_cache,
             )
@@ -178,6 +203,7 @@ async fn handle_event(
                 lnurl_client,
                 event,
                 keys,
+                xpriv,
                 lnurl_cache,
                 pay_cache,
             )
@@ -213,6 +239,54 @@ impl ResponseNoType {
         let res: Response = serde_json::from_value(json)?;
         Ok(res)
     }
+}
+
+async fn handle_auth_response(
+    db_pool: &Pool<ConnectionManager<PgConnection>>,
+    xpriv: ExtendedPrivKey,
+    event: Event,
+) -> anyhow::Result<()> {
+    trace!("Received auth response: {}", event.id);
+
+    let p_tag = event.tags.iter().find_map(|tag| {
+        if let Tag::PubKey(p, _) = tag {
+            Some(p.to_owned())
+        } else {
+            None
+        }
+    });
+    let p_tag = match p_tag {
+        Some(p) => p,
+        None => return Err(anyhow!("No p tag found")),
+    };
+
+    let mut conn = db_pool.get()?;
+    let Some(auth) = WalletAuth::get_by_pubkey(&mut conn, p_tag)? else {
+        return Err(anyhow!("No auth found"));
+    };
+    if auth.user_pubkey().is_some() {
+        return Err(anyhow!("Auth already has user_pubkey"));
+    }
+
+    let secret = xpriv
+        .derive_priv(
+            SECP256K1,
+            &[ChildNumber::from_hardened_idx(auth.index as u32).unwrap()],
+        )
+        .unwrap()
+        .private_key;
+    let content = decrypt(&secret, &event.pubkey, event.content)?;
+    let confirmation: NIP49Confirmation = serde_json::from_str(&content)?;
+
+    if !confirmation.commands.contains(&Method::PayInvoice) {
+        return Err(anyhow!("Invalid confirmation, missing pay_invoice"));
+    }
+
+    WalletAuth::add_pubkey(&mut conn, p_tag, event.pubkey)?;
+
+    info!("Successfully registered with Nostr Wallet Auth");
+
+    Ok(())
 }
 
 async fn handle_nwc_response(
@@ -312,6 +386,7 @@ async fn handle_live_chat(
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
+    xpriv: ExtendedPrivKey,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
@@ -367,6 +442,7 @@ async fn handle_live_chat(
         lnurl_client,
         event,
         keys,
+        xpriv,
         lnurl_cache,
         pay_cache,
     )
@@ -379,6 +455,7 @@ async fn handle_reaction(
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
+    xpriv: ExtendedPrivKey,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
@@ -414,6 +491,7 @@ async fn handle_reaction(
         lnurl_client,
         event,
         keys,
+        xpriv,
         lnurl_cache,
         pay_cache,
     )
@@ -429,6 +507,7 @@ async fn pay_user(
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
+    xpriv: ExtendedPrivKey,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
@@ -446,7 +525,16 @@ async fn pay_user(
             event.id, event.content, event.pubkey
         );
 
-        let nwc = user.zap_config.nwc();
+        let user_nwc_key = if let Some(auth_index) = user.zap_config.auth_index {
+            Some(
+                WalletAuth::get_user_pubkey(&mut conn, auth_index)?
+                    .ok_or(anyhow!("No user pubkey found"))?,
+            )
+        } else {
+            None
+        };
+
+        let nwc = user.zap_config.nwc(xpriv, user_nwc_key);
 
         let lnurl = get_user_lnurl(user_key, &lnurl_cache, client).await?;
 

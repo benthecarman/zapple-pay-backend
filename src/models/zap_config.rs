@@ -1,10 +1,12 @@
 use crate::models::schema::zap_configs::dsl;
+use crate::DEFAULT_AUTH_RELAY;
 use bitcoin::hashes::hex::ToHex;
+use bitcoin::util::bip32::{ChildNumber, ExtendedPrivKey};
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
 use nostr::prelude::NostrWalletConnectURI;
 use nostr::secp256k1::SecretKey;
-use nostr::Url;
+use nostr::{Url, SECP256K1};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -32,8 +34,9 @@ pub struct ZapConfig {
     pub user_id: i32,
     pub emoji: String,
     pub amount: i32,
-    nwc: String,
+    nwc: Option<String>,
     created_at: chrono::NaiveDateTime,
+    pub auth_index: Option<i32>,
 }
 
 #[derive(Insertable, AsChangeset)]
@@ -42,12 +45,37 @@ pub struct NewZapConfig<'a> {
     pub user_id: i32,
     pub emoji: &'a str,
     pub amount: i32,
-    pub nwc: &'a str,
+    pub nwc: Option<String>,
+    pub auth_index: Option<i32>,
 }
 
 impl ZapConfig {
-    pub fn nwc(&self) -> NostrWalletConnectURI {
-        NostrWalletConnectURI::from_str(&self.nwc).expect("invalid nwc")
+    pub fn nwc(
+        &self,
+        xpriv: ExtendedPrivKey,
+        user_public_key: Option<XOnlyPublicKey>,
+    ) -> NostrWalletConnectURI {
+        match (self.nwc.as_deref(), self.auth_index) {
+            (Some(str), None) => NostrWalletConnectURI::from_str(str).unwrap(),
+            (None, Some(index)) => {
+                let secret = xpriv
+                    .derive_priv(
+                        SECP256K1,
+                        &[ChildNumber::from_hardened_idx(index as u32).unwrap()],
+                    )
+                    .unwrap()
+                    .private_key;
+
+                NostrWalletConnectURI::new(
+                    user_public_key.expect("Missing user public key from database"),
+                    Url::parse(DEFAULT_AUTH_RELAY).unwrap(),
+                    Some(secret),
+                    None,
+                )
+                .unwrap()
+            }
+            _ => panic!("Invalid ZapConfig"),
+        }
     }
 
     pub fn amount_msats(&self) -> u64 {
@@ -60,12 +88,14 @@ impl ZapConfig {
     }
 
     pub fn get_nwc_secrets(conn: &mut PgConnection) -> anyhow::Result<Vec<SecretKey>> {
-        let strings: Vec<String> = zap_configs::table
+        let strings: Vec<Option<String>> = zap_configs::table
             .select(zap_configs::nwc)
+            .filter(zap_configs::nwc.is_not_null())
             .distinct()
             .load(conn)?;
         let mut secrets: Vec<SecretKey> = strings
             .into_iter()
+            .flatten()
             .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
             .map(|nwc| nwc.secret)
             .collect();
@@ -77,12 +107,14 @@ impl ZapConfig {
     }
 
     pub fn get_nwc_relays(conn: &mut PgConnection) -> anyhow::Result<HashMap<Url, usize>> {
-        let strings: Vec<String> = zap_configs::table
+        let strings: Vec<Option<String>> = zap_configs::table
             .select(zap_configs::nwc)
+            .filter(zap_configs::nwc.is_not_null())
             .distinct()
             .load(conn)?;
         let relays: Vec<Url> = strings
             .into_iter()
+            .flatten()
             .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
             .map(|nwc| nwc.relay_url)
             .collect();

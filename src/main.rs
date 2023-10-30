@@ -3,6 +3,7 @@
 use crate::config::*;
 use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
+use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::ZapConfig;
 use crate::models::MIGRATIONS;
 use crate::routes::*;
@@ -10,6 +11,8 @@ use axum::http::{Method, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{http, Extension, Router};
 use bitcoin::hashes::hex::ToHex;
+use bitcoin::util::bip32::ExtendedPrivKey;
+use bitcoin::Network;
 use clap::Parser;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
@@ -32,16 +35,21 @@ use tower_http::cors::{Any, CorsLayer};
 mod config;
 mod listener;
 mod models;
+mod nip49;
 mod profile_handler;
 mod routes;
 mod subscription_handler;
+
+const DEFAULT_AUTH_RELAY: &str = "wss://nostr.mutinywallet.com";
 
 #[derive(Clone)]
 pub struct State {
     db_pool: Pool<ConnectionManager<PgConnection>>,
     pubkey_channel: Arc<Mutex<Sender<Vec<String>>>>,
     secret_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
+    auth_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
     pub server_keys: Keys,
+    pub xpriv: ExtendedPrivKey,
 }
 
 #[tokio::main]
@@ -83,17 +91,20 @@ async fn main() -> anyhow::Result<()> {
 
     let mut secrets = ZapConfig::get_nwc_secrets(&mut connection)?;
     let subscription_secrets = SubscriptionConfig::get_nwc_secrets(&mut connection)?;
-    let subscription_to_npubs = SubscriptionConfig::get_to_npubs(&mut connection)?;
+    let auth_pubkeys = WalletAuth::get_pubkeys(&mut connection)?;
     secrets.extend(subscription_secrets);
     secrets.sort();
     secrets.dedup();
+    let subscription_to_npubs = SubscriptionConfig::get_to_npubs(&mut connection)?;
+    let unlinked = WalletAuth::get_unlinked(&mut connection)?;
     drop(connection);
 
     // convert to pubkeys and hex
-    let secrets = secrets
+    let mut secrets = secrets
         .into_iter()
         .map(|s| s.x_only_public_key(SECP256K1).0)
         .collect::<Vec<_>>();
+    secrets.extend(auth_pubkeys);
 
     let (pubkey_sender, pubkey_receiver) = watch::channel(pubkeys);
     let pubkey_channel = Arc::new(Mutex::new(pubkey_sender));
@@ -101,11 +112,16 @@ async fn main() -> anyhow::Result<()> {
     let (secret_sender, secret_receiver) = watch::channel(secrets);
     let secret_channel = Arc::new(Mutex::new(secret_sender));
 
+    let (auth_sender, auth_receiver) = watch::channel(unlinked);
+    let auth_channel = Arc::new(Mutex::new(auth_sender));
+
     let state = State {
         db_pool,
         pubkey_channel: pubkey_channel.clone(),
         secret_channel,
+        auth_channel,
         server_keys: keys.server_keys(),
+        xpriv: keys.xprivkey(),
     };
 
     let addr: std::net::SocketAddr = format!("{}:{}", config.bind, config.port)
@@ -115,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Webserver running on http://{addr}");
 
     let server_router = Router::new()
+        .route("/wallet-auth", get(wallet_auth))
         .route("/set-user", post(set_user_config))
         .route("/create-subscription", post(create_user_subscription))
         .route(
@@ -167,7 +184,9 @@ async fn main() -> anyhow::Result<()> {
                 db_pool.clone(),
                 pubkey_receiver.clone(),
                 secret_receiver.clone(),
+                auth_receiver.clone(),
                 server_keys.clone(),
+                state.xpriv,
                 l_cache.clone(),
                 p_cache.clone(),
             )
@@ -199,6 +218,7 @@ async fn main() -> anyhow::Result<()> {
         loop {
             if let Err(e) = subscription_handler::start_subscription_handler(
                 keys.server_keys(),
+                state.xpriv,
                 config.relay.clone(),
                 state.db_pool.clone(),
                 lnurl_cache.clone(),
@@ -245,6 +265,10 @@ impl ZapplePayKeys {
 
     fn server_keys(&self) -> Keys {
         Keys::new(self.server_key)
+    }
+
+    fn xprivkey(&self) -> ExtendedPrivKey {
+        ExtendedPrivKey::new_master(Network::Bitcoin, &self.server_key.secret_bytes()).unwrap()
     }
 }
 

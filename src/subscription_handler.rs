@@ -1,10 +1,13 @@
 use crate::models::subscription_config::SubscriptionConfig;
 use crate::models::user::User;
+use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_event::ZapEvent;
 use crate::models::zap_event_to_subscription_config::ZapEventToSubscriptionConfig;
 use crate::models::{schema, ConfigType};
 use crate::profile_handler::SentInvoice;
 use crate::LnUrlCacheResult;
+use anyhow::anyhow;
+use bitcoin::util::bip32::ExtendedPrivKey;
 use bitcoin::XOnlyPublicKey;
 use chrono::{Timelike, Utc};
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -14,6 +17,7 @@ use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::Builder;
 use log::*;
+use nostr::prelude::NostrWalletConnectURI;
 use nostr::Keys;
 use nostr_sdk::Client;
 use std::collections::HashMap;
@@ -25,6 +29,7 @@ use tokio::sync::Mutex;
 
 pub async fn start_subscription_handler(
     keys: Keys,
+    xpriv: ExtendedPrivKey,
     relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
@@ -80,8 +85,8 @@ pub async fn start_subscription_handler(
 
         let subs_by_relay = subscriptions
             .into_iter()
-            .sorted_by_key(|s| s.nwc().relay_url)
-            .group_by(|s| s.nwc().relay_url.clone())
+            .sorted_by_key(|s| s.relay_url())
+            .group_by(|s| s.relay_url())
             .into_iter()
             .map(|(url, subs)| (url, subs.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
@@ -115,14 +120,27 @@ pub async fn start_subscription_handler(
                         (lnurl.clone(), Some(lnurl2.clone()))
                     }
                 };
-                let nwc = sub.nwc();
+
                 let tried_lnurl = lnurl.0.clone();
                 let keys = keys.clone();
                 let lnurl_client = lnurl_client.clone();
                 let pay_cache = pay_cache.clone();
                 let client = client.clone();
+                let fut_db_pool = db_pool.clone();
                 let fut = async move {
                     let amount_msats = sub.amount_msats();
+
+                    let user_nwc_key = if let Some(auth_index) = sub.auth_index {
+                        let mut conn = fut_db_pool.get()?;
+                        Some(
+                            WalletAuth::get_user_pubkey(&mut conn, auth_index)?
+                                .ok_or(anyhow!("No user pubkey found"))?,
+                        )
+                    } else {
+                        None
+                    };
+                    let nwc = sub.nwc(xpriv, user_nwc_key);
+
                     match crate::profile_handler::pay_to_lnurl(
                         &keys,
                         *from_user,
@@ -132,7 +150,7 @@ pub async fn start_subscription_handler(
                         lnurl,
                         &lnurl_client,
                         amount_msats,
-                        nwc,
+                        nwc.clone(),
                         &pay_cache,
                         Some(client),
                     )
@@ -142,18 +160,19 @@ pub async fn start_subscription_handler(
                             error!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
                             Err(e)
                         }
-                        Ok(res) => Ok((res, sub)),
+                        Ok(res) => Ok((res, nwc, sub)),
                     }
                 };
 
                 futs.push(fut);
             }
         }
-        let successful: Vec<(SentInvoice, SubscriptionConfig)> = futures::future::join_all(futs)
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
+        let successful: Vec<(SentInvoice, NostrWalletConnectURI, SubscriptionConfig)> =
+            futures::future::join_all(futs)
+                .await
+                .into_iter()
+                .flatten()
+                .collect();
         let num_successful = successful.len();
         let num_failed = total - num_successful;
 
@@ -169,7 +188,7 @@ pub async fn start_subscription_handler(
         // save zap events and update last_paid
         let mut conn = db_pool.get()?;
         conn.transaction::<_, anyhow::Error, _>(|conn| {
-            for (sent, sub) in successful.iter() {
+            for (sent, nwc, sub) in successful.iter() {
                 let from_user = user_keys.get(&sub.user_id).unwrap();
                 let to_npub = sub.to_npub();
                 // save to db
@@ -179,7 +198,7 @@ pub async fn start_subscription_handler(
                     &to_npub,
                     ConfigType::Subscription,
                     sub.amount,
-                    sub.nwc().secret,
+                    nwc.secret,
                     sent.payment_hash,
                     sent.event_id,
                 )?;
@@ -193,7 +212,7 @@ pub async fn start_subscription_handler(
                     schema::subscription_configs::id.eq_any(
                         successful
                             .iter()
-                            .map(|(_, sub)| sub.id)
+                            .map(|(_, _, sub)| sub.id)
                             .collect::<Vec<i32>>(),
                     ),
                 )

@@ -1,8 +1,11 @@
-use crate::routes::{SubscriptionPeriod, ALL_SUBSCRIPTION_PERIODS};
+use crate::nip49::{SubscriptionPeriod, ALL_SUBSCRIPTION_PERIODS};
+use crate::DEFAULT_AUTH_RELAY;
 use bitcoin::hashes::hex::ToHex;
+use bitcoin::util::bip32::{ChildNumber, ExtendedPrivKey};
 use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
 use nostr::prelude::{NostrWalletConnectURI, SecretKey};
+use nostr::{Url, SECP256K1};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -30,9 +33,10 @@ pub struct SubscriptionConfig {
     pub to_npub: String,
     pub amount: i32,
     time_period: String,
-    nwc: String,
+    nwc: Option<String>,
     created_at: chrono::NaiveDateTime,
     pub last_paid: Option<chrono::NaiveDateTime>,
+    pub auth_index: Option<i32>,
 }
 
 #[derive(Insertable, AsChangeset)]
@@ -42,8 +46,9 @@ pub struct NewSubscriptionConfig<'a> {
     pub to_npub: &'a str,
     pub amount: i32,
     pub time_period: &'a str,
-    pub nwc: &'a str,
+    pub nwc: Option<String>,
     pub last_paid: Option<chrono::NaiveDateTime>,
+    pub auth_index: Option<i32>,
 }
 
 impl SubscriptionConfig {
@@ -55,8 +60,39 @@ impl SubscriptionConfig {
         SubscriptionPeriod::from_str(&self.time_period).expect("invalid time period")
     }
 
-    pub fn nwc(&self) -> NostrWalletConnectURI {
-        NostrWalletConnectURI::from_str(&self.nwc).expect("invalid nwc")
+    pub fn nwc(
+        &self,
+        xpriv: ExtendedPrivKey,
+        user_public_key: Option<XOnlyPublicKey>,
+    ) -> NostrWalletConnectURI {
+        match (self.nwc.as_deref(), self.auth_index) {
+            (Some(str), None) => NostrWalletConnectURI::from_str(str).unwrap(),
+            (None, Some(index)) => {
+                let secret = xpriv
+                    .derive_priv(
+                        SECP256K1,
+                        &[ChildNumber::from_hardened_idx(index as u32).unwrap()],
+                    )
+                    .unwrap()
+                    .private_key;
+
+                NostrWalletConnectURI::new(
+                    user_public_key.expect("Missing user public key from database"),
+                    Url::parse(DEFAULT_AUTH_RELAY).unwrap(),
+                    Some(secret),
+                    None,
+                )
+                .unwrap()
+            }
+            _ => panic!("Invalid ZapConfig"),
+        }
+    }
+
+    pub fn relay_url(&self) -> Url {
+        self.nwc
+            .as_deref()
+            .map(|s| NostrWalletConnectURI::from_str(s).unwrap().relay_url)
+            .unwrap_or(Url::from_str(DEFAULT_AUTH_RELAY).expect("invalid relay url"))
     }
 
     pub fn amount_msats(&self) -> u64 {
@@ -79,12 +115,14 @@ impl SubscriptionConfig {
     }
 
     pub fn get_nwc_secrets(conn: &mut PgConnection) -> anyhow::Result<Vec<SecretKey>> {
-        let strings: Vec<String> = subscription_configs::table
+        let strings: Vec<Option<String>> = subscription_configs::table
             .select(subscription_configs::nwc)
+            .filter(subscription_configs::nwc.is_not_null())
             .distinct()
             .load(conn)?;
         let secrets = strings
             .into_iter()
+            .flatten()
             .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
             .map(|nwc| nwc.secret)
             .collect();

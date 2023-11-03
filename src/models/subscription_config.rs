@@ -7,6 +7,7 @@ use diesel::prelude::*;
 use nostr::prelude::{NostrWalletConnectURI, SecretKey};
 use nostr::{Url, SECP256K1};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use super::schema::subscription_configs;
@@ -192,6 +193,28 @@ impl SubscriptionConfig {
             .into_iter()
             .filter_map(|s| XOnlyPublicKey::from_str(&s).ok())
             .collect())
+    }
+
+    pub fn get_nwc_relays(conn: &mut PgConnection) -> anyhow::Result<HashMap<Url, usize>> {
+        let strings: Vec<Option<String>> = subscription_configs::table
+            .select(subscription_configs::nwc)
+            .filter(subscription_configs::nwc.is_not_null())
+            .distinct()
+            .load(conn)?;
+        let relays: Vec<Url> = strings
+            .into_iter()
+            .flatten()
+            .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
+            .map(|nwc| nwc.relay_url)
+            .collect();
+
+        // count the relays
+        let mut counts = HashMap::with_capacity(relays.len());
+        for relay in relays {
+            counts.entry(relay).and_modify(|c| *c += 1).or_insert(1);
+        }
+
+        Ok(counts)
     }
 
     pub fn delete_by_id(conn: &mut PgConnection, id: i32) -> anyhow::Result<()> {

@@ -759,7 +759,14 @@ pub async fn count(
 
 pub async fn relays_impl(state: &State) -> anyhow::Result<HashMap<Url, usize>> {
     let mut conn = state.db_pool.get()?;
-    ZapConfig::get_nwc_relays(&mut conn)
+    let mut zap = ZapConfig::get_nwc_relays(&mut conn)?;
+    let subs = SubscriptionConfig::get_nwc_relays(&mut conn)?;
+
+    for (key, count) in subs {
+        *zap.entry(key).or_insert(0) += count;
+    }
+
+    Ok(zap)
 }
 
 pub async fn relays(

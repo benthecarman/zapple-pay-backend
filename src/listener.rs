@@ -7,6 +7,7 @@ use crate::models::zap_event_to_zap_config::ZapEventToZapConfig;
 use crate::models::ConfigType;
 use crate::nip49::NIP49Confirmation;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
+use crate::utils::map_emoji;
 use crate::LnUrlCacheResult;
 use anyhow::anyhow;
 use bitcoin::hashes::hex::{FromHex, ToHex};
@@ -511,10 +512,8 @@ async fn pay_user(
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
-    let content = if event.kind == Kind::Reaction
-        && (event.content.is_empty() || event.content == "+" || event.content == "❤")
-    {
-        "❤️"
+    let content = if event.kind == Kind::Reaction {
+        map_emoji(&event.content).unwrap_or(&event.content)
     } else {
         &event.content
     };

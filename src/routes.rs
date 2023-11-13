@@ -4,6 +4,7 @@ use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
 use crate::nip49::{NIP49Budget, SubscriptionPeriod, NIP49URI};
+use crate::utils::map_emoji;
 use crate::{State, DEFAULT_AUTH_RELAY};
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
@@ -72,10 +73,7 @@ impl SetUserConfig {
     pub fn emoji(&self) -> String {
         self.emoji
             .clone()
-            .map(|e| match e.as_str() {
-                "❤" | "+" | "" => "❤️".to_string(),
-                _ => e,
-            })
+            .map(|e| map_emoji(&e).unwrap_or(&e).to_string())
             .unwrap_or("⚡".to_string())
     }
 }
@@ -779,6 +777,21 @@ pub async fn relays(
     Extension(state): Extension<State>,
 ) -> Result<Json<HashMap<Url, usize>>, (StatusCode, String)> {
     match relays_impl(&state).await {
+        Ok(res) => Ok(Json(res)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
+pub async fn migrate_emojis(
+    Extension(state): Extension<State>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    let mut conn = state.db_pool.get().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Could not get db connection\"}"),
+        )
+    })?;
+    match ZapConfig::migrate_emojis(&mut conn) {
         Ok(res) => Ok(Json(res)),
         Err(e) => Err(handle_anyhow_error(e)),
     }

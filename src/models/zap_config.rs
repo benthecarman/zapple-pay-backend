@@ -146,18 +146,9 @@ impl ZapConfig {
         pubkey: &XOnlyPublicKey,
         emoji: &str,
     ) -> anyhow::Result<Option<Self>> {
-        // handle different emoji representations
-        let table = match emoji {
-            "⚡️" => zap_configs::table
-                .filter(zap_configs::emoji.eq(emoji))
-                .or_filter(zap_configs::emoji.eq("⚡")),
-            "⚡" => zap_configs::table
-                .filter(zap_configs::emoji.eq(emoji))
-                .or_filter(zap_configs::emoji.eq("⚡️")),
-            _ => zap_configs::table
-                .filter(zap_configs::emoji.eq(emoji))
-                .or_filter(zap_configs::emoji.eq(emoji)),
-        };
+        let table = zap_configs::table
+            .filter(zap_configs::emoji.eq(emoji))
+            .or_filter(zap_configs::emoji.eq(emoji));
 
         Ok(table
             .inner_join(users::table)
@@ -170,6 +161,30 @@ impl ZapConfig {
     pub fn delete_by_id(conn: &mut PgConnection, id: i32) -> anyhow::Result<usize> {
         let count =
             diesel::delete(zap_configs::table.filter(zap_configs::id.eq(id))).execute(conn)?;
+        Ok(count)
+    }
+
+    pub fn migrate_emojis(conn: &mut PgConnection) -> anyhow::Result<usize> {
+        let mut count = diesel::update(zap_configs::table)
+            .filter(zap_configs::emoji.eq("⚡️"))
+            .set(zap_configs::emoji.eq("⚡"))
+            .execute(conn)?;
+
+        count += diesel::update(zap_configs::table)
+            .filter(zap_configs::emoji.eq(""))
+            .set(zap_configs::emoji.eq("❤️"))
+            .execute(conn)?;
+
+        count += diesel::update(zap_configs::table)
+            .filter(zap_configs::emoji.eq("+"))
+            .set(zap_configs::emoji.eq("❤️"))
+            .execute(conn)?;
+
+        count += diesel::update(zap_configs::table)
+            .filter(zap_configs::emoji.eq("❤"))
+            .set(zap_configs::emoji.eq("❤️"))
+            .execute(conn)?;
+
         Ok(count)
     }
 }

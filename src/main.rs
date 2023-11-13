@@ -39,6 +39,7 @@ mod nip49;
 mod profile_handler;
 mod routes;
 mod subscription_handler;
+mod utils;
 
 const DEFAULT_AUTH_RELAY: &str = "wss://nostr.mutinywallet.com";
 
@@ -142,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/delete-user/:npub", get(delete_user_configs))
         .route("/count", get(count))
         .route("/relays", get(relays))
+        .route("/migrate-emojis", get(migrate_emojis))
         .route("/get-user/:npub/:emoji", get(get_user_config))
         .route("/get-user/:npub", get(get_user_configs))
         .route("/get-subscriptions/:npub", get(get_user_subscriptions))

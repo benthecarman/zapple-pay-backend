@@ -199,24 +199,18 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let relays = config.relay.clone();
-    let _keys = keys.clone();
-    let cache = lnurl_cache.clone();
     tokio::spawn(async move {
         match subscription_handler::populate_lnurl_cache(
             subscription_to_npubs,
-            &relays,
-            _keys.server_keys(),
-            cache,
+            &config.relay,
+            keys.server_keys(),
+            lnurl_cache.clone(),
         )
         .await
         {
             Ok(_) => info!("populated lnurl cache"),
             Err(e) => error!("populate lnurl cache error: {e}"),
-        }
-    });
-
-    tokio::spawn(async move {
+        };
         loop {
             if let Err(e) = subscription_handler::start_subscription_handler(
                 keys.server_keys(),

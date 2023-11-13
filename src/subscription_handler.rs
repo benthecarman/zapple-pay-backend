@@ -80,8 +80,9 @@ pub async fn start_subscription_handler(
         };
 
         // pay users
-        let mut futs = Vec::with_capacity(subscriptions.len());
         let total = subscriptions.len();
+        let mut successful: Vec<(SentInvoice, NostrWalletConnectURI, SubscriptionConfig)> =
+            Vec::with_capacity(total);
 
         let subs_by_relay = subscriptions
             .into_iter()
@@ -120,59 +121,44 @@ pub async fn start_subscription_handler(
                         (lnurl.clone(), Some(lnurl2.clone()))
                     }
                 };
-
                 let tried_lnurl = lnurl.0.clone();
-                let keys = keys.clone();
-                let lnurl_client = lnurl_client.clone();
-                let pay_cache = pay_cache.clone();
-                let client = client.clone();
-                let fut_db_pool = db_pool.clone();
-                let fut = async move {
-                    let amount_msats = sub.amount_msats();
+                let amount_msats = sub.amount_msats();
 
-                    let user_nwc_key = if let Some(auth_index) = sub.auth_index {
-                        let mut conn = fut_db_pool.get()?;
-                        Some(
-                            WalletAuth::get_user_pubkey(&mut conn, auth_index)?
-                                .ok_or(anyhow!("No user pubkey found"))?,
-                        )
-                    } else {
-                        None
-                    };
-                    let nwc = sub.nwc(xpriv, user_nwc_key);
-
-                    match crate::profile_handler::pay_to_lnurl(
-                        &keys,
-                        *from_user,
-                        Some(to_npub),
-                        None,
-                        None,
-                        lnurl,
-                        &lnurl_client,
-                        amount_msats,
-                        nwc.clone(),
-                        &pay_cache,
-                        Some(client),
+                let user_nwc_key = if let Some(auth_index) = sub.auth_index {
+                    let mut conn = db_pool.get()?;
+                    Some(
+                        WalletAuth::get_user_pubkey(&mut conn, auth_index)?
+                            .ok_or(anyhow!("No user pubkey found"))?,
                     )
-                    .await
-                    {
-                        Err(e) => {
-                            error!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
-                            Err(e)
-                        }
-                        Ok(res) => Ok((res, nwc, sub)),
-                    }
+                } else {
+                    None
                 };
+                let nwc = sub.nwc(xpriv, user_nwc_key);
 
-                futs.push(fut);
-            }
-        }
-        let successful: Vec<(SentInvoice, NostrWalletConnectURI, SubscriptionConfig)> =
-            futures::future::join_all(futs)
+                match crate::profile_handler::pay_to_lnurl(
+                    &keys,
+                    *from_user,
+                    Some(to_npub),
+                    None,
+                    None,
+                    lnurl,
+                    &lnurl_client,
+                    amount_msats,
+                    nwc.clone(),
+                    &pay_cache,
+                    Some(client.clone()),
+                )
                 .await
-                .into_iter()
-                .flatten()
-                .collect();
+                {
+                    Err(e) => {
+                        error!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
+                    }
+                    Ok(res) => successful.push((res, nwc, sub)),
+                }
+            }
+
+            client.disconnect().await?;
+        }
         let num_successful = successful.len();
         let num_failed = total - num_successful;
 

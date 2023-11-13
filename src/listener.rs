@@ -511,12 +511,13 @@ async fn pay_user(
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
-    let content =
-        if event.kind == Kind::Reaction && (event.content.is_empty() || event.content == "+") {
-            "❤️"
-        } else {
-            &event.content
-        };
+    let content = if event.kind == Kind::Reaction
+        && (event.content.is_empty() || event.content == "+" || event.content == "❤")
+    {
+        "❤️"
+    } else {
+        &event.content
+    };
 
     let mut conn = db_pool.get()?;
     if let Some(user) = crate::models::get_user_zap_config(&mut conn, event.pubkey, content)? {

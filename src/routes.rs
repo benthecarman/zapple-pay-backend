@@ -70,7 +70,13 @@ impl SetUserConfig {
     }
 
     pub fn emoji(&self) -> String {
-        self.emoji.clone().unwrap_or("⚡".to_string())
+        self.emoji
+            .clone()
+            .map(|e| match e.as_str() {
+                "❤" | "+" | "" => "❤️".to_string(),
+                _ => e,
+            })
+            .unwrap_or("⚡".to_string())
     }
 }
 

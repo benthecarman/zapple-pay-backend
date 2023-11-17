@@ -28,8 +28,9 @@ use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch::Sender;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{watch, Mutex, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 
 mod config;
@@ -160,6 +161,32 @@ async fn main() -> anyhow::Result<()> {
                 .allow_methods([Method::GET, Method::POST]),
         );
 
+    // Set up a oneshot channel to handle shutdown signal
+    let (tx, rx) = oneshot::channel();
+
+    // Spawn a task to listen for shutdown signals
+    tokio::spawn(async move {
+        let mut term_signal = signal(SignalKind::terminate())
+            .map_err(|e| error!("failed to install TERM signal handler: {e}"))
+            .unwrap();
+        let mut int_signal = signal(SignalKind::interrupt())
+            .map_err(|e| {
+                error!("failed to install INT signal handler: {e}");
+            })
+            .unwrap();
+
+        tokio::select! {
+            _ = term_signal.recv() => {
+                info!("Received SIGTERM");
+            },
+            _ = int_signal.recv() => {
+                info!("Received SIGINT");
+            },
+        }
+
+        let _ = tx.send(());
+    });
+
     let server = axum::Server::bind(&addr).serve(server_router.into_make_service());
 
     // restart nostr connections every hour
@@ -228,15 +255,15 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let graceful = server.with_graceful_shutdown(async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to create Ctrl+C shutdown signal");
+        let _ = rx.await;
     });
 
     // Await the server to receive the shutdown signal
     if let Err(e) = graceful.await {
-        error!("shutdown error: {}", e);
+        error!("shutdown error: {e}");
     }
+
+    info!("Graceful shutdown complete");
 
     Ok(())
 }

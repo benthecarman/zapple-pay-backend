@@ -287,7 +287,7 @@ async fn handle_auth_response(
         return Err(anyhow!("Invalid secret"));
     }
 
-    WalletAuth::add_pubkey(&mut conn, d_tag, event.pubkey)?;
+    WalletAuth::add_user_data(&mut conn, d_tag, event.pubkey, confirmation.relay)?;
 
     info!("Successfully registered with Nostr Wallet Auth");
 
@@ -529,16 +529,15 @@ async fn pay_user(
             event.id, event.content, event.pubkey
         );
 
-        let user_nwc_key = if let Some(auth_index) = user.zap_config.auth_index {
-            Some(
-                WalletAuth::get_user_pubkey(&mut conn, auth_index)?
-                    .ok_or(anyhow!("No user pubkey found"))?,
-            )
+        let (user_nwc_key, relay) = if let Some(auth_index) = user.zap_config.auth_index {
+            let (key, relay) = WalletAuth::get_user_data(&mut conn, auth_index)?
+                .ok_or(anyhow!("No user pubkey found"))?;
+            (Some(key), relay)
         } else {
-            None
+            (None, None)
         };
 
-        let nwc = user.zap_config.nwc(xpriv, user_nwc_key);
+        let nwc = user.zap_config.nwc(xpriv, user_nwc_key, relay.as_deref());
 
         let lnurl = get_user_lnurl(user_key, &lnurl_cache, client).await?;
 

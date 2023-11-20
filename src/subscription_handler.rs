@@ -124,16 +124,15 @@ pub async fn start_subscription_handler(
                 let tried_lnurl = lnurl.0.clone();
                 let amount_msats = sub.amount_msats();
 
-                let user_nwc_key = if let Some(auth_index) = sub.auth_index {
+                let (user_nwc_key, relay) = if let Some(auth_index) = sub.auth_index {
                     let mut conn = db_pool.get()?;
-                    Some(
-                        WalletAuth::get_user_pubkey(&mut conn, auth_index)?
-                            .ok_or(anyhow!("No user pubkey found"))?,
-                    )
+                    let (key, relay) = WalletAuth::get_user_data(&mut conn, auth_index)?
+                        .ok_or(anyhow!("No user pubkey found"))?;
+                    (Some(key), relay)
                 } else {
-                    None
+                    (None, None)
                 };
-                let nwc = sub.nwc(xpriv, user_nwc_key);
+                let nwc = sub.nwc(xpriv, user_nwc_key, relay.as_deref());
 
                 match crate::profile_handler::pay_to_lnurl(
                     &keys,

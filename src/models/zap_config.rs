@@ -55,6 +55,7 @@ impl ZapConfig {
         &self,
         xpriv: ExtendedPrivKey,
         user_public_key: Option<XOnlyPublicKey>,
+        relay: Option<&str>,
     ) -> NostrWalletConnectURI {
         match (self.nwc.as_deref(), self.auth_index) {
             (Some(str), None) => NostrWalletConnectURI::from_str(str).unwrap(),
@@ -69,7 +70,7 @@ impl ZapConfig {
 
                 NostrWalletConnectURI::new(
                     user_public_key.expect("Missing user public key from database"),
-                    Url::parse(DEFAULT_AUTH_RELAY).unwrap(),
+                    Url::parse(relay.unwrap_or(DEFAULT_AUTH_RELAY)).unwrap(),
                     Some(secret),
                     None,
                 )

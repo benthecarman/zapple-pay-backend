@@ -909,7 +909,13 @@ mod test {
         let uri = wallet_auth_impl(&state, None).await.unwrap();
 
         // set dummy pubkey
-        WalletAuth::add_pubkey(&mut state.db_pool.get().unwrap(), uri.public_key, npub).unwrap();
+        WalletAuth::add_user_data(
+            &mut state.db_pool.get().unwrap(),
+            uri.public_key,
+            npub,
+            None,
+        )
+        .unwrap();
 
         let payload = SetUserConfig {
             npub,
@@ -949,7 +955,13 @@ mod test {
         let uri = wallet_auth_impl(&state, None).await.unwrap();
 
         // set dummy pubkey
-        WalletAuth::add_pubkey(&mut state.db_pool.get().unwrap(), uri.public_key, npub).unwrap();
+        WalletAuth::add_user_data(
+            &mut state.db_pool.get().unwrap(),
+            uri.public_key,
+            npub,
+            None,
+        )
+        .unwrap();
 
         let payload = SetUserConfig {
             npub,

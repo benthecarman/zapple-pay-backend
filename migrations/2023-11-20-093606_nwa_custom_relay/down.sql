@@ -1,0 +1,1 @@
+ALTER TABLE wallet_auth DROP COLUMN relay;

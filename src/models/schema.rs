@@ -38,6 +38,7 @@ diesel::table! {
         pubkey -> Text,
         user_pubkey -> Nullable<Text>,
         created_at -> Timestamp,
+        relay -> Nullable<Text>,
     }
 }
 

@@ -27,6 +27,7 @@ pub struct WalletAuth {
     pubkey: String,
     user_pubkey: Option<String>,
     created_at: chrono::NaiveDateTime,
+    relay: Option<String>,
 }
 
 #[derive(Insertable, Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -82,14 +83,18 @@ impl WalletAuth {
         })
     }
 
-    pub fn add_pubkey(
+    pub fn add_user_data(
         conn: &mut PgConnection,
         pubkey: XOnlyPublicKey,
         user_pubkey: XOnlyPublicKey,
+        relay: Option<String>,
     ) -> anyhow::Result<()> {
         diesel::update(wallet_auth::table)
             .filter(wallet_auth::pubkey.eq(pubkey.to_hex()))
-            .set(wallet_auth::user_pubkey.eq(user_pubkey.to_hex()))
+            .set((
+                wallet_auth::user_pubkey.eq(user_pubkey.to_hex()),
+                wallet_auth::relay.eq(relay),
+            ))
             .execute(conn)?;
 
         Ok(())
@@ -125,17 +130,21 @@ impl WalletAuth {
         Ok(id)
     }
 
-    pub fn get_user_pubkey(
+    pub fn get_user_data(
         conn: &mut PgConnection,
         index: i32,
-    ) -> anyhow::Result<Option<XOnlyPublicKey>> {
-        let user_pubkey = wallet_auth::table
-            .select(wallet_auth::user_pubkey)
+    ) -> anyhow::Result<Option<(XOnlyPublicKey, Option<String>)>> {
+        let (user_pubkey, relay) = wallet_auth::table
+            .select((wallet_auth::user_pubkey, wallet_auth::relay))
             .filter(wallet_auth::index.eq(index))
-            .first::<Option<String>>(conn)?;
+            .first::<(Option<String>, Option<String>)>(conn)?;
 
-        Ok(user_pubkey
-            .map(|pubkey| XOnlyPublicKey::from_str(&pubkey).expect("invalid user_pubkey")))
+        Ok(user_pubkey.map(|pubkey| {
+            (
+                XOnlyPublicKey::from_str(&pubkey).expect("invalid user_pubkey"),
+                relay,
+            )
+        }))
     }
 
     pub fn get_unlinked(conn: &mut PgConnection) -> anyhow::Result<Vec<XOnlyPublicKey>> {
@@ -168,5 +177,102 @@ impl WalletAuth {
             .collect();
 
         Ok(pubkeys)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::models::wallet_auth::WalletAuth;
+    use crate::models::MIGRATIONS;
+    use bitcoin::util::bip32::ExtendedPrivKey;
+    use diesel::r2d2::{ConnectionManager, Pool};
+    use diesel::{Connection, PgConnection, RunQueryDsl};
+    use diesel_migrations::MigrationHarness;
+    use nostr::key::XOnlyPublicKey;
+    use std::str::FromStr;
+
+    const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
+
+    fn init_db() -> Pool<ConnectionManager<PgConnection>> {
+        dotenv::dotenv().ok();
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let manager = ConnectionManager::<PgConnection>::new(url);
+        let db_pool = Pool::builder()
+            .max_size(16)
+            .test_on_check_out(true)
+            .build(manager)
+            .expect("Could not build connection pool");
+
+        // run migrations
+        let mut connection = db_pool.get().unwrap();
+        connection
+            .run_pending_migrations(MIGRATIONS)
+            .expect("migrations could not run");
+
+        db_pool
+    }
+
+    fn clear_database(conn: &mut PgConnection) {
+        conn.transaction::<_, anyhow::Error, _>(|conn| {
+            diesel::delete(crate::models::schema::zap_events::table).execute(conn)?;
+            diesel::delete(crate::models::schema::donations::table).execute(conn)?;
+            diesel::delete(crate::models::schema::subscription_configs::table).execute(conn)?;
+            diesel::delete(crate::models::schema::zap_configs::table).execute(conn)?;
+            diesel::delete(crate::models::schema::users::table).execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_user_data() {
+        let db_pool = init_db();
+        let conn = &mut db_pool.get().unwrap();
+        clear_database(conn);
+
+        let xpriv = ExtendedPrivKey::new_master(bitcoin::Network::Bitcoin, &[]).unwrap();
+        let wallet_auth = WalletAuth::create(conn, xpriv).unwrap();
+
+        let pubkey = wallet_auth.pubkey();
+
+        let user_data = WalletAuth::get_user_data(conn, wallet_auth.index).unwrap();
+        assert_eq!(user_data, None);
+
+        let user_pubkey = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        WalletAuth::add_user_data(conn, pubkey, user_pubkey, None).unwrap();
+
+        let user_data = WalletAuth::get_user_data(conn, wallet_auth.index)
+            .unwrap()
+            .unwrap();
+        assert_eq!(user_data.0, user_pubkey);
+        assert_eq!(user_data.1, None);
+
+        clear_database(conn);
+    }
+
+    #[tokio::test]
+    async fn test_get_user_data_with_relay() {
+        let db_pool = init_db();
+        let conn = &mut db_pool.get().unwrap();
+        clear_database(conn);
+
+        let xpriv = ExtendedPrivKey::new_master(bitcoin::Network::Bitcoin, &[]).unwrap();
+        let wallet_auth = WalletAuth::create(conn, xpriv).unwrap();
+
+        let pubkey = wallet_auth.pubkey();
+
+        let user_data = WalletAuth::get_user_data(conn, wallet_auth.index).unwrap();
+        assert_eq!(user_data, None);
+
+        let user_pubkey = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let relay = Some("wss://nostr.mutinywallet.com/".to_string());
+        WalletAuth::add_user_data(conn, pubkey, user_pubkey, relay.clone()).unwrap();
+
+        let user_data = WalletAuth::get_user_data(conn, wallet_auth.index)
+            .unwrap()
+            .unwrap();
+        assert_eq!(user_data.0, user_pubkey);
+        assert_eq!(user_data.1, relay);
+        clear_database(conn);
     }
 }

@@ -41,6 +41,7 @@ pub struct ZapConfig {
 
 #[derive(Insertable, AsChangeset)]
 #[diesel(table_name = zap_configs)]
+#[diesel(treat_none_as_null = true)]
 pub struct NewZapConfig<'a> {
     pub user_id: i32,
     pub emoji: &'a str,

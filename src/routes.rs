@@ -5,7 +5,7 @@ use crate::models::zap_config::ZapConfig;
 use crate::models::zap_event::ZapEvent;
 use crate::nip49::{NIP49Budget, SubscriptionPeriod, NIP49URI};
 use crate::utils::map_emoji;
-use crate::{State, DEFAULT_AUTH_RELAY};
+use crate::{utils, State, DEFAULT_AUTH_RELAY};
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
@@ -73,7 +73,7 @@ impl SetUserConfig {
     pub fn emoji(&self) -> String {
         self.emoji
             .clone()
-            .map(|e| map_emoji(&e).unwrap_or(&e).to_string())
+            .map(|e| map_emoji(&e).unwrap_or(&e).trim().to_string())
             .unwrap_or("⚡".to_string())
     }
 }
@@ -246,7 +246,7 @@ pub(crate) async fn set_user_config_impl(
 ) -> anyhow::Result<UserConfigs> {
     payload.verify()?;
 
-    let emoji_str = payload.emoji().trim().to_string();
+    let emoji_str = payload.emoji();
 
     if emoji_str.is_empty() {
         return Err(anyhow::anyhow!("Invalid emoji"));
@@ -690,19 +690,24 @@ pub async fn wallet_auth_impl(
         WalletAuth::create(&mut conn, state.xpriv)?
     };
 
+    let public_key = auth.pubkey();
+    let secret = utils::calculate_nwa_secret(state.xpriv, public_key);
+
     let uri = NIP49URI {
-        public_key: auth.pubkey(),
+        public_key,
         relay_url: Url::parse(DEFAULT_AUTH_RELAY)?,
+        secret,
         required_commands: vec![Method::PayInvoice],
         optional_commands: vec![],
         budget,
+        identity: Some(state.server_keys.public_key()),
     };
 
     // notify new auth key
     let auths = state.auth_channel.lock().await;
     auths.send_if_modified(|current| {
         // public_key should be unique, don't need to check for duplicates
-        current.push(auth.pubkey());
+        current.push(public_key);
         true
     });
 
@@ -900,6 +905,46 @@ mod test {
         clear_database(&state);
 
         let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+
+        let uri = wallet_auth_impl(&state, None).await.unwrap();
+
+        // set dummy pubkey
+        WalletAuth::add_pubkey(&mut state.db_pool.get().unwrap(), uri.public_key, npub).unwrap();
+
+        let payload = SetUserConfig {
+            npub,
+            amount_sats: 21,
+            nwc: None,
+            auth_id: Some(uri.public_key),
+            emoji: None,
+            donations: None,
+        };
+
+        let current = set_user_config_impl(payload, &state).await.unwrap();
+        assert_eq!(current.zaps.len(), 1);
+
+        clear_database(&state);
+    }
+
+    #[tokio::test]
+    async fn test_create_config_overwrite_with_auth() {
+        let state = init_state();
+        clear_database(&state);
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+
+        // set using nwc first
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+        let payload = SetUserConfig {
+            npub,
+            amount_sats: 21,
+            nwc: Some(nwc),
+            auth_id: None,
+            emoji: None,
+            donations: None,
+        };
+        let current = set_user_config_impl(payload, &state).await.unwrap();
+        assert_eq!(current.zaps.len(), 1);
 
         let uri = wallet_auth_impl(&state, None).await.unwrap();
 

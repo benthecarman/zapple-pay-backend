@@ -104,10 +104,15 @@ impl FromStr for SubscriptionPeriod {
         match s {
             "minute" => Ok(SubscriptionPeriod::Minute),
             "hour" => Ok(SubscriptionPeriod::Hour),
+            "hourly" => Ok(SubscriptionPeriod::Hour),
             "day" => Ok(SubscriptionPeriod::Day),
+            "daily" => Ok(SubscriptionPeriod::Day),
             "week" => Ok(SubscriptionPeriod::Week),
+            "weekly" => Ok(SubscriptionPeriod::Week),
             "month" => Ok(SubscriptionPeriod::Month),
+            "monthly" => Ok(SubscriptionPeriod::Month),
             "year" => Ok(SubscriptionPeriod::Year),
+            "yearly" => Ok(SubscriptionPeriod::Year),
             _ => Err(anyhow::anyhow!("Invalid SubscriptionPeriod")),
         }
     }
@@ -150,19 +155,23 @@ impl FromStr for NIP49Budget {
     }
 }
 
-/// Nostr Connect URI
+/// Nostr Wallet Auth URI
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NIP49URI {
     /// App Pubkey
     pub public_key: XOnlyPublicKey,
     /// URL of the relay of choice where the `App` is connected and the `Signer` must send and listen for messages.
     pub relay_url: Url,
+    /// A random identifier that the wallet will use to identify the connection.
+    pub secret: String,
     /// Required commands
     pub required_commands: Vec<Method>,
     /// Optional commands
     pub optional_commands: Vec<Method>,
     /// Budget
     pub budget: Option<NIP49Budget>,
+    /// App's pubkey for identity verification
+    pub identity: Option<XOnlyPublicKey>,
 }
 
 fn method_from_str(s: &str) -> Result<Method, Error> {
@@ -201,11 +210,16 @@ impl FromStr for NIP49URI {
             let mut required_commands: Vec<Method> = vec![];
             let mut optional_commands: Vec<Method> = vec![];
             let mut budget: Option<NIP49Budget> = None;
+            let mut secret: Option<String> = None;
+            let mut identity: Option<XOnlyPublicKey> = None;
 
             for (key, value) in url.query_pairs() {
                 match key {
                     Cow::Borrowed("relay") => {
                         relay_url = Some(Url::parse(value.as_ref())?);
+                    }
+                    Cow::Borrowed("secret") => {
+                        secret = Some(value.to_string());
                     }
                     Cow::Borrowed("required_commands") => {
                         required_commands = value
@@ -222,6 +236,9 @@ impl FromStr for NIP49URI {
                     Cow::Borrowed("budget") => {
                         budget = Some(NIP49Budget::from_str(value.as_ref())?);
                     }
+                    Cow::Borrowed("identity") => {
+                        identity = Some(XOnlyPublicKey::from_str(value.as_ref())?);
+                    }
                     _ => (),
                 }
             }
@@ -230,13 +247,15 @@ impl FromStr for NIP49URI {
                 return Err(Error::InvalidURI);
             }
 
-            if let Some(relay_url) = relay_url {
+            if let Some((relay_url, secret)) = relay_url.zip(secret) {
                 return Ok(Self {
                     public_key,
                     relay_url,
+                    secret,
                     required_commands,
                     optional_commands,
                     budget,
+                    identity,
                 });
             }
         }
@@ -249,9 +268,10 @@ impl fmt::Display for NIP49URI {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{NIP49_URI_SCHEME}://{}?relay={}&required_commands={}",
+            "{NIP49_URI_SCHEME}://{}?relay={}&secret={}&required_commands={}",
             self.public_key,
             url_encode(self.relay_url.to_string()),
+            self.secret,
             url_encode(
                 self.required_commands
                     .iter()
@@ -273,6 +293,9 @@ impl fmt::Display for NIP49URI {
         }
         if let Some(budget) = &self.budget {
             write!(f, "&budget={}", url_encode(budget.to_string()))?;
+        }
+        if let Some(identity) = &self.identity {
+            write!(f, "&identity={identity}")?;
         }
         Ok(())
     }
@@ -299,6 +322,11 @@ impl<'a> Deserialize<'a> for NIP49URI {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NIP49Confirmation {
+    /// A random identifier that the wallet will use to identify the connection.
+    /// Should be the same as the one in the uri.
+    pub secret: String,
     /// Commands they agreed to
     pub commands: Vec<Method>,
+    /// Relay the wallet prefers
+    pub relay: Option<String>,
 }

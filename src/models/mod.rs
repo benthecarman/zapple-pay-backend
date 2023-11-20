@@ -11,6 +11,7 @@ use diesel::result::Error;
 use diesel::upsert::on_constraint;
 use diesel::{PgConnection, QueryDsl, RunQueryDsl};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
+use log::error;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -86,6 +87,16 @@ pub fn upsert_user(conn: &mut PgConnection, config: SetUserConfig) -> anyhow::Re
             nwc: config.nwc.map(|x| x.to_string()),
             auth_index,
         };
+
+        match (zap_config.nwc.as_ref(), zap_config.auth_index.as_ref()) {
+            (None, None) => {
+                error!("zap_config.nwc and zap_config.auth_index are both None, this should never happen");
+            },
+            (Some(nwc), Some(auth_index)) => {
+                error!("zap_config.nwc {nwc} and zap_config.auth_index {auth_index} are both Some, this should never happen");
+            },
+            _ => {} // expected
+        }
 
         let config_id: i32 = diesel::insert_into(schema::zap_configs::table)
             .values(&zap_config)

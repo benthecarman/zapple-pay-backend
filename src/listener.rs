@@ -8,7 +8,7 @@ use crate::models::ConfigType;
 use crate::nip49::NIP49Confirmation;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
 use crate::utils::map_emoji;
-use crate::LnUrlCacheResult;
+use crate::{utils, LnUrlCacheResult};
 use anyhow::anyhow;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::Hash;
@@ -85,7 +85,7 @@ pub async fn start_listener(
             Kind::TextNote,
             Kind::Regular(1311),
             Kind::WalletConnectResponse,
-            Kind::Replaceable(13193),
+            Kind::ParameterizedReplaceable(33194),
         ];
 
         let reactions = Filter::new()
@@ -99,7 +99,7 @@ pub async fn start_listener(
             .since(Timestamp::now());
 
         let auth = Filter::new()
-            .kind(Kind::Replaceable(13193))
+            .kind(Kind::ParameterizedReplaceable(33194))
             .pubkeys(auth_keys)
             .since(Timestamp::now());
 
@@ -113,7 +113,7 @@ pub async fn start_listener(
                 Ok(notification) = notifications.recv() => {
                     match notification {
                         RelayPoolNotification::Event(_url, event) => {
-                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| matches!(tag, Tag::PubKey(_, _))) {
+                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| matches!(tag, Tag::PubKey(_, _) | Tag::Identifier(_))) {
                                 tokio::spawn({
                                     let db_pool = db_pool.clone();
                                     let client = client.clone();
@@ -157,10 +157,11 @@ pub async fn start_listener(
                     break;
                 }
                 _ = auth_receiver.changed() => {
-                    let auth_keys: Vec<XOnlyPublicKey> = auth_receiver.borrow().clone();
+                    let auth_keys: Vec<String> = auth_receiver.borrow().iter().map(|x| x.to_hex()).collect();
+
                     let auth = Filter::new()
-                        .kind(Kind::Replaceable(13193))
-                        .pubkeys(auth_keys)
+                        .kind(Kind::ParameterizedReplaceable(33194))
+                        .identifiers(auth_keys)
                         .since(Timestamp::now());
                     client.subscribe(vec![auth]).await;
                 }
@@ -182,7 +183,7 @@ async fn handle_event(
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     match event.kind {
-        Kind::Replaceable(13193) => handle_auth_response(db_pool, xpriv, event).await,
+        Kind::ParameterizedReplaceable(33194) => handle_auth_response(db_pool, xpriv, event).await,
         Kind::WalletConnectResponse => handle_nwc_response(db_pool, event).await,
         Kind::TextNote | Kind::Reaction => {
             handle_reaction(
@@ -249,20 +250,20 @@ async fn handle_auth_response(
 ) -> anyhow::Result<()> {
     trace!("Received auth response: {}", event.id);
 
-    let p_tag = event.tags.iter().find_map(|tag| {
-        if let Tag::PubKey(p, _) = tag {
-            Some(p.to_owned())
+    let d_tag = event.tags.iter().find_map(|tag| {
+        if let Tag::Identifier(pk) = tag {
+            XOnlyPublicKey::from_str(pk).ok()
         } else {
             None
         }
     });
-    let p_tag = match p_tag {
-        Some(p) => p,
-        None => return Err(anyhow!("No p tag found")),
+    let d_tag = match d_tag {
+        Some(pk) => pk,
+        None => return Err(anyhow!("No d tag found")),
     };
 
     let mut conn = db_pool.get()?;
-    let Some(auth) = WalletAuth::get_by_pubkey(&mut conn, p_tag)? else {
+    let Some(auth) = WalletAuth::get_by_pubkey(&mut conn, d_tag)? else {
         return Err(anyhow!("No auth found"));
     };
     if auth.user_pubkey().is_some() {
@@ -282,8 +283,11 @@ async fn handle_auth_response(
     if !confirmation.commands.contains(&Method::PayInvoice) {
         return Err(anyhow!("Invalid confirmation, missing pay_invoice"));
     }
+    if confirmation.secret != utils::calculate_nwa_secret(xpriv, auth.pubkey()) {
+        return Err(anyhow!("Invalid secret"));
+    }
 
-    WalletAuth::add_pubkey(&mut conn, p_tag, event.pubkey)?;
+    WalletAuth::add_pubkey(&mut conn, d_tag, event.pubkey)?;
 
     info!("Successfully registered with Nostr Wallet Auth");
 

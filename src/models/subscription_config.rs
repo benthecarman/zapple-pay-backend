@@ -42,6 +42,7 @@ pub struct SubscriptionConfig {
 
 #[derive(Insertable, AsChangeset)]
 #[diesel(table_name = subscription_configs)]
+#[diesel(treat_none_as_null = true)]
 pub struct NewSubscriptionConfig<'a> {
     pub user_id: i32,
     pub to_npub: &'a str,

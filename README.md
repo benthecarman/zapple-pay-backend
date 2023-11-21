@@ -21,11 +21,14 @@ payload:
 
 the emoji and donations are optional
 
+only one of `nwc` or `auth_id` can be set.
+
 ```json
 {
   "npub": "user's npub",
   "amount_sats": 1000,
   "nwc": "user's nwc",
+  "auth_id": "id from /wallet-auth",
   "emoji": "⚡",
   "donations": [
     {
@@ -42,20 +45,20 @@ the user's current configs
 
 ```json
 {
-    "zaps" :[
-      {
-        "npub": "user's npub",
-        "amount_sats": 1000,
-        "emoji": "⚡",
-        "donations": [
-          {
-            "amount_sats": 1000,
-            "lnurl": "donation lnurl",
-            "npub": "donation npub"
-          }
-        ]
-      }
-    ],
+  "zaps": [
+    {
+      "npub": "user's npub",
+      "amount_sats": 1000,
+      "emoji": "⚡",
+      "donations": [
+        {
+          "amount_sats": 1000,
+          "lnurl": "donation lnurl",
+          "npub": "donation npub"
+        }
+      ]
+    }
+  ],
   "subscriptions": []
 }
 ```
@@ -66,6 +69,8 @@ the user's current configs
 
 time_period can be `minute`, `hour`, `day`, `week`, `month`, or `year`
 
+only one of `nwc` or `auth_id` can be set.
+
 payload:
 
 ```json
@@ -74,7 +79,8 @@ payload:
   "to_npub": "user to zap npub",
   "amount_sats": 1000,
   "time_period": "day",
-  "nwc": "user's nwc"
+  "nwc": "user's nwc",
+  "auth_id": "id from /wallet-auth"
 }
 ```
 
@@ -271,6 +277,46 @@ the user's current configs
 }
 ```
 
+### Nostr Wallet Auth
+
+`GET /wallet-auth`
+
+query params:
+
+These query parameters are optional ways to modify the NWA uri given. If you are setting them `time_period` and `amount`
+but both be set `identity` is optional.
+
+- time_period: Time period for the budget. Can be one of `day`, `week`, `month`, or `year`
+- amount: Amount in satoshis for the budget.
+- identity: Hex encoded pubkey for which identity to be associated with this connection, if not given zapple pay's key
+  will be used
+
+returns:
+
+Nostr Wallet Auth uri and id to reference in future api calls.
+
+```json
+{
+  "id": "hex encoded id",
+  "uri": "nostr+walletauth://blahblah"
+}
+```
+
+### Nostr Wallet Status
+
+`GET /check-wallet-auth`
+
+query params:
+
+- id: The `id` given in `/wallet-auth`
+
+returns:
+
+boolean for if we have successfully connected
+
+```json
+true
+```
 
 ### Counts
 

@@ -681,9 +681,16 @@ pub async fn delete_user_subscription(
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct WalletAuthParams {
+    pub time_period: SubscriptionPeriod,
+    pub amount: u64,
+    pub identity: Option<XOnlyPublicKey>,
+}
+
 pub async fn wallet_auth_impl(
     state: &State,
-    budget: Option<NIP49Budget>,
+    params: Option<WalletAuthParams>,
 ) -> anyhow::Result<NIP49URI> {
     let auth = {
         let mut conn = state.db_pool.get()?;
@@ -693,6 +700,15 @@ pub async fn wallet_auth_impl(
     let public_key = auth.pubkey();
     let secret = utils::calculate_nwa_secret(state.xpriv, public_key);
 
+    let budget = params.as_ref().map(|p| NIP49Budget {
+        time_period: p.time_period,
+        amount: p.amount,
+    });
+
+    let identity = params
+        .and_then(|p| p.identity)
+        .unwrap_or(state.server_keys.public_key());
+
     let uri = NIP49URI {
         public_key,
         relay_url: Url::parse(DEFAULT_AUTH_RELAY)?,
@@ -700,7 +716,7 @@ pub async fn wallet_auth_impl(
         required_commands: vec![Method::PayInvoice],
         optional_commands: vec![],
         budget,
-        identity: Some(state.server_keys.public_key()),
+        identity: Some(identity),
     };
 
     // notify new auth key
@@ -716,10 +732,10 @@ pub async fn wallet_auth_impl(
 
 pub async fn wallet_auth(
     Extension(state): Extension<State>,
-    payload: Option<Query<NIP49Budget>>,
+    payload: Option<Query<WalletAuthParams>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let budget = payload.map(|p| p.0);
-    match wallet_auth_impl(&state, budget).await {
+    let params = payload.map(|p| p.0);
+    match wallet_auth_impl(&state, params).await {
         Ok(uri) => Ok(Json(json!({"id": uri.public_key.to_hex(), "uri": uri}))),
         Err(e) => Err(handle_anyhow_error(e)),
     }

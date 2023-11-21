@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch::Sender;
-use tokio::sync::{watch, Mutex, oneshot};
+use tokio::sync::{oneshot, watch, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 
 mod config;
@@ -134,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
 
     let server_router = Router::new()
         .route("/wallet-auth", get(wallet_auth))
+        .route("/check-wallet-auth", get(check_wallet_auth))
         .route("/set-user", post(set_user_config))
         .route("/create-subscription", post(create_user_subscription))
         .route(

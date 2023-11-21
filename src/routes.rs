@@ -741,6 +741,28 @@ pub async fn wallet_auth(
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CheckWalletAuthPayload {
+    id: XOnlyPublicKey,
+}
+
+pub async fn check_wallet_auth_impl(state: &State, id: XOnlyPublicKey) -> anyhow::Result<bool> {
+    let mut conn = state.db_pool.get()?;
+    let auth = WalletAuth::get_by_pubkey(&mut conn, id)?;
+
+    Ok(auth.is_some_and(|x| x.user_pubkey().is_some()))
+}
+
+pub async fn check_wallet_auth(
+    Extension(state): Extension<State>,
+    Query(query): Query<CheckWalletAuthPayload>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    match check_wallet_auth_impl(&state, query.id).await {
+        Ok(res) => Ok(Json(res)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Counts {
     users: i64,

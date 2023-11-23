@@ -270,7 +270,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn fallback(uri: Uri) -> (StatusCode, String) {
-    (StatusCode::NOT_FOUND, format!("No route for {}", uri))
+    (StatusCode::NOT_FOUND, format!("No route for {uri}"))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

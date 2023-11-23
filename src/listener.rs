@@ -612,9 +612,9 @@ async fn pay_user(
             let truncated: String = content.chars().take(5).collect();
             // if we truncated, add ...
             if content != truncated {
-                debug!("Config not found: {} {}…", event.pubkey, truncated)
+                debug!("Config not found: {} {truncated}…", event.pubkey)
             } else {
-                debug!("Config not found: {} {}", event.pubkey, truncated)
+                debug!("Config not found: {} {truncated}", event.pubkey)
             };
         }
 

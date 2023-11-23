@@ -12,7 +12,7 @@ use lnurl::{AsyncClient, Builder};
 use log::*;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{encrypt, PayInvoiceRequestParams, ToBech32};
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp, Url};
 use nostr_sdk::Client;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -333,7 +333,14 @@ pub async fn pay_to_lnurl(
                 None
             };
 
-            client.add_relay(&nwc.relay_url, proxy).await?;
+            let relay_url =
+                if nwc.relay_url == Url::from_str("ws://alby-mainnet-nostr-relay/v1").unwrap() {
+                    Url::from_str("wss://relay.getalby.com/v1").unwrap()
+                } else {
+                    nwc.relay_url.clone()
+                };
+
+            client.add_relay(&relay_url, proxy).await?;
             client.connect().await;
 
             let id = client.send_event(event).await?;

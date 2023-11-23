@@ -92,10 +92,17 @@ impl SubscriptionConfig {
     }
 
     pub fn relay_url(&self) -> Url {
-        self.nwc
+        let url = self
+            .nwc
             .as_deref()
             .map(|s| NostrWalletConnectURI::from_str(s).unwrap().relay_url)
-            .unwrap_or(Url::from_str(DEFAULT_AUTH_RELAY).expect("invalid relay url"))
+            .unwrap_or(Url::from_str(DEFAULT_AUTH_RELAY).expect("invalid relay url"));
+
+        if url == Url::from_str("ws://alby-mainnet-nostr-relay/v1").unwrap() {
+            Url::from_str("wss://relay.getalby.com/v1").unwrap()
+        } else {
+            url
+        }
     }
 
     pub fn amount_msats(&self) -> u64 {

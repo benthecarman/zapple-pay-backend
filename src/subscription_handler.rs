@@ -263,7 +263,10 @@ async fn pay_subscription(
     .await
     {
         Err(e) => {
-            error!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
+            error!(
+                "Error paying to lnurl {tried_lnurl} {:?} {amount_msats} msats: {e}",
+                client.relays().await.into_keys().map(|x| x.to_string())
+            );
         }
         Ok(res) => successful.push((res, nwc, sub)),
     }

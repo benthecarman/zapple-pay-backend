@@ -15,7 +15,7 @@ use diesel::{Connection, ExpressionMethods, PgConnection, RunQueryDsl};
 use itertools::Itertools;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
-use lnurl::Builder;
+use lnurl::{AsyncClient, Builder};
 use log::*;
 use nostr::prelude::NostrWalletConnectURI;
 use nostr::Keys;
@@ -105,54 +105,21 @@ pub async fn start_subscription_handler(
             client.connect().await;
 
             for sub in subs {
-                let from_user = user_keys.get(&sub.user_id).unwrap();
-                let to_npub = sub.to_npub();
-                let lnurl = match lnurls.get(&to_npub) {
-                    None => {
-                        debug!("No lnurl found for {to_npub}");
-                        continue;
-                    }
-                    Some(LnUrlCacheResult::Timestamp(_)) => {
-                        debug!("Profile with no lnurl found for {to_npub}");
-                        continue;
-                    }
-                    Some(LnUrlCacheResult::LnUrl((lnurl, _))) => (lnurl.clone(), None),
-                    Some(LnUrlCacheResult::MultipleLnUrl((lnurl, lnurl2, _))) => {
-                        (lnurl.clone(), Some(lnurl2.clone()))
-                    }
-                };
-                let tried_lnurl = lnurl.0.clone();
-                let amount_msats = sub.amount_msats();
-
-                let (user_nwc_key, relay) = if let Some(auth_index) = sub.auth_index {
-                    let mut conn = db_pool.get()?;
-                    let (key, relay) = WalletAuth::get_user_data(&mut conn, auth_index)?
-                        .ok_or(anyhow!("No user pubkey found"))?;
-                    (Some(key), relay)
-                } else {
-                    (None, None)
-                };
-                let nwc = sub.nwc(xpriv, user_nwc_key, relay.as_deref());
-
-                match crate::profile_handler::pay_to_lnurl(
-                    &keys,
-                    *from_user,
-                    Some(to_npub),
-                    None,
-                    None,
-                    lnurl,
-                    &lnurl_client,
-                    amount_msats,
-                    nwc.clone(),
+                if let Err(e) = pay_subscription(
+                    sub,
+                    &user_keys,
+                    &lnurls,
                     &pay_cache,
-                    Some(client.clone()),
+                    &db_pool,
+                    &lnurl_client,
+                    xpriv,
+                    &keys,
+                    &mut successful,
+                    &client,
                 )
                 .await
                 {
-                    Err(e) => {
-                        error!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
-                    }
-                    Ok(res) => successful.push((res, nwc, sub)),
+                    error!("Error paying subscription: {e}");
                 }
             }
 
@@ -217,6 +184,71 @@ pub async fn start_subscription_handler(
 
         sleep_until_next_min(start.second()).await;
     }
+}
+
+async fn pay_subscription(
+    sub: SubscriptionConfig,
+    user_keys: &HashMap<i32, XOnlyPublicKey>,
+    lnurls: &HashMap<XOnlyPublicKey, LnUrlCacheResult>,
+    pay_cache: &Mutex<HashMap<LnUrl, PayResponse>>,
+    db_pool: &Pool<ConnectionManager<PgConnection>>,
+    lnurl_client: &AsyncClient,
+    xpriv: ExtendedPrivKey,
+    keys: &Keys,
+    successful: &mut Vec<(SentInvoice, NostrWalletConnectURI, SubscriptionConfig)>,
+    client: &Client,
+) -> anyhow::Result<()> {
+    let from_user = user_keys.get(&sub.user_id).unwrap();
+    let to_npub = sub.to_npub();
+    let lnurl = match lnurls.get(&to_npub) {
+        None => {
+            debug!("No lnurl found for {to_npub}");
+            return Ok(());
+        }
+        Some(LnUrlCacheResult::Timestamp(_)) => {
+            debug!("Profile with no lnurl found for {to_npub}");
+            return Ok(());
+        }
+        Some(LnUrlCacheResult::LnUrl((lnurl, _))) => (lnurl.clone(), None),
+        Some(LnUrlCacheResult::MultipleLnUrl((lnurl, lnurl2, _))) => {
+            (lnurl.clone(), Some(lnurl2.clone()))
+        }
+    };
+    let tried_lnurl = lnurl.0.clone();
+    let amount_msats = sub.amount_msats();
+
+    let (user_nwc_key, relay) = if let Some(auth_index) = sub.auth_index {
+        let mut conn = db_pool.get()?;
+        let (key, relay) = WalletAuth::get_user_data(&mut conn, auth_index)?
+            .ok_or(anyhow!("No user pubkey found"))?;
+        (Some(key), relay)
+    } else {
+        (None, None)
+    };
+    let nwc = sub.nwc(xpriv, user_nwc_key, relay.as_deref());
+
+    match crate::profile_handler::pay_to_lnurl(
+        keys,
+        *from_user,
+        Some(to_npub),
+        None,
+        None,
+        lnurl,
+        lnurl_client,
+        amount_msats,
+        nwc.clone(),
+        pay_cache,
+        Some(client.clone()),
+    )
+    .await
+    {
+        Err(e) => {
+            error!("Error paying to lnurl {tried_lnurl} {amount_msats} msats: {e}");
+        }
+        Ok(res) => successful.push((res, nwc, sub)),
+    }
+
+    Ok(())
 }
 
 async fn sleep_until_next_min(start_second: u32) {

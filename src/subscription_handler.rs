@@ -18,6 +18,7 @@ use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
 use log::*;
 use nostr::prelude::NostrWalletConnectURI;
+use nostr::prelude::ToBech32;
 use nostr::Keys;
 use nostr_sdk::Client;
 use std::collections::HashMap;
@@ -218,11 +219,14 @@ async fn pay_subscription(
     let to_npub = sub.to_npub();
     let lnurl = match lnurls.get(&to_npub) {
         None => {
-            debug!("No lnurl found for {to_npub}");
+            debug!("No lnurl found for {}", to_npub.to_bech32().unwrap());
             return Ok(());
         }
         Some(LnUrlCacheResult::Timestamp(_)) => {
-            debug!("Profile with no lnurl found for {to_npub}");
+            debug!(
+                "Profile with no lnurl found for {}",
+                to_npub.to_bech32().unwrap()
+            );
             return Ok(());
         }
         Some(LnUrlCacheResult::LnUrl((lnurl, _))) => (lnurl.clone(), None),

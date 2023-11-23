@@ -93,6 +93,10 @@ pub async fn start_subscription_handler(
             .collect::<Vec<_>>();
 
         for (relay, subs) in subs_by_relay {
+            if subs.is_empty() {
+                continue;
+            }
+
             let client = Client::new(&keys);
 
             let proxy = if relay.host_str().is_some_and(|h| h.ends_with(".onion")) {
@@ -104,22 +108,34 @@ pub async fn start_subscription_handler(
             client.add_relay(relay, proxy).await?;
             client.connect().await;
 
-            for sub in subs {
-                if let Err(e) = pay_subscription(
-                    sub,
-                    &user_keys,
-                    &lnurls,
-                    &pay_cache,
-                    &db_pool,
-                    &lnurl_client,
-                    xpriv,
-                    &keys,
-                    &mut successful,
-                    &client,
-                )
-                .await
-                {
-                    error!("Error paying subscription: {e}");
+            let mut first = true;
+            // group subscriptions into groups of 10
+            let chunks = subs.chunks(10);
+            for chunk in chunks {
+                // sleep for 3 seconds between chunks
+                if !first {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                }
+                first = false;
+
+                // pay subscriptions in chunk
+                for sub in chunk {
+                    if let Err(e) = pay_subscription(
+                        sub.clone(),
+                        &user_keys,
+                        &lnurls,
+                        &pay_cache,
+                        &db_pool,
+                        &lnurl_client,
+                        xpriv,
+                        &keys,
+                        &mut successful,
+                        &client,
+                    )
+                    .await
+                    {
+                        error!("Error paying subscription: {e}");
+                    }
                 }
             }
 

@@ -681,6 +681,31 @@ pub async fn delete_user_subscription(
     }
 }
 
+#[allow(dead_code)]
+pub async fn delete_subscribed_user(
+    Path(to_npub): Path<String>,
+    Extension(state): Extension<State>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    let to_npub = XOnlyPublicKey::from_str(&to_npub).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid to_npub\"}"),
+        )
+    })?;
+
+    let mut conn = state.db_pool.get().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from("{\"status\":\"ERROR\",\"reason\":\"Could not get db connection\"}"),
+        )
+    })?;
+
+    match crate::models::delete_subscribed_user(&mut conn, to_npub) {
+        Ok(count) => Ok(Json(count)),
+        Err(e) => Err(handle_anyhow_error(e)),
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct WalletAuthParams {
     pub time_period: SubscriptionPeriod,

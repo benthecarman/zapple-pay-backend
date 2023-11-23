@@ -308,3 +308,23 @@ pub fn delete_user_subscription(
         Ok(())
     })
 }
+
+#[allow(dead_code)]
+pub fn delete_subscribed_user(
+    conn: &mut PgConnection,
+    to_npub: XOnlyPublicKey,
+) -> anyhow::Result<usize> {
+    conn.transaction(|conn| {
+        use schema::subscription_configs;
+
+        let configs = SubscriptionConfig::get_by_to_npub(conn, &to_npub)?;
+        let ids = configs.iter().map(|c| c.id).collect::<Vec<_>>();
+
+        let count = diesel::delete(
+            subscription_configs::table.filter(subscription_configs::id.eq_any(ids)),
+        )
+        .execute(conn)?;
+
+        Ok(count)
+    })
+}

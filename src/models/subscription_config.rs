@@ -152,6 +152,18 @@ impl SubscriptionConfig {
         Ok(configs)
     }
 
+    pub fn get_by_to_npub(
+        conn: &mut PgConnection,
+        to_npub: &XOnlyPublicKey,
+    ) -> anyhow::Result<Vec<Self>> {
+        let configs = subscription_configs::table
+            .filter(subscription_configs::to_npub.eq(to_npub.to_hex()))
+            .select(subscription_configs::all_columns)
+            .load::<Self>(conn)?;
+
+        Ok(configs)
+    }
+
     pub fn get_by_pubkey_and_to_npub(
         conn: &mut PgConnection,
         pubkey: &XOnlyPublicKey,

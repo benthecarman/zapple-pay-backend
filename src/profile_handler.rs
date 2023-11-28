@@ -177,8 +177,8 @@ async fn get_invoice_from_lnurl(
                 };
 
                 if let Ok(LnUrlPayResponse(pay)) = resp {
-                    // don't cache voltage lnurls, they change everytime
-                    if !lnurl.url.contains("vlt.ge") {
+                    // don't cache voltage or coinos lnurls, they change everytime
+                    if !lnurl.url.contains("vlt.ge") && !lnurl.url.contains("coinos.io") {
                         let mut cache = pay_cache.lock().await;
                         cache.insert(lnurl.clone(), pay.clone());
                     }

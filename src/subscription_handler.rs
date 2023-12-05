@@ -135,7 +135,7 @@ pub async fn start_subscription_handler(
                     )
                     .await
                     {
-                        error!("Error paying subscription: {e}");
+                        error!("Error paying subscription ({}): {e}", sub.id);
                     }
                 }
             }
@@ -224,8 +224,9 @@ async fn pay_subscription(
         }
         Some(LnUrlCacheResult::Timestamp(_)) => {
             debug!(
-                "Profile with no lnurl found for {}",
-                to_npub.to_bech32().unwrap()
+                "Profile with no lnurl found for {} on subscription {}",
+                to_npub.to_bech32().unwrap(),
+                sub.id
             );
             return Ok(());
         }
@@ -264,8 +265,8 @@ async fn pay_subscription(
     {
         Err(e) => {
             error!(
-                "Error paying to lnurl {tried_lnurl} {:?} {amount_msats} msats: {e}",
-                client.relays().await.into_keys().map(|x| x.to_string())
+                "Error paying to lnurl {tried_lnurl} {amount_msats} msats on {} for subscription {}: {e}",
+                nwc.relay_url.to_string(), sub.id
             );
         }
         Ok(res) => successful.push((res, nwc, sub)),

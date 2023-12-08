@@ -80,6 +80,25 @@ pub async fn start_subscription_handler(
             cache.clone()
         };
 
+        // get subscriptions with their nwc
+        let mut conn = db_pool.get()?;
+        let subscriptions = subscriptions
+            .into_iter()
+            .map(|sub| {
+                let (user_nwc_key, relay) = if let Some(auth_index) = sub.auth_index {
+                    let (key, relay) = WalletAuth::get_user_data(&mut conn, auth_index)?
+                        .ok_or(anyhow!("No user pubkey found"))?;
+                    (Some(key), relay)
+                } else {
+                    (None, None)
+                };
+                let nwc = sub.nwc(xpriv, user_nwc_key, relay.as_deref());
+
+                Ok((sub, nwc))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        drop(conn);
+
         // pay users
         let total = subscriptions.len();
         let mut successful: Vec<(SentInvoice, NostrWalletConnectURI, SubscriptionConfig)> =
@@ -87,8 +106,8 @@ pub async fn start_subscription_handler(
 
         let subs_by_relay = subscriptions
             .into_iter()
-            .sorted_by_key(|s| s.relay_url())
-            .group_by(|s| s.relay_url())
+            .sorted_by_key(|(_, nwc)| nwc.relay_url.clone())
+            .group_by(|(_, nwc)| nwc.relay_url.clone())
             .into_iter()
             .map(|(url, subs)| (url, subs.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
@@ -120,15 +139,14 @@ pub async fn start_subscription_handler(
                 }
 
                 // pay subscriptions in chunk
-                for sub in chunk {
+                for (sub, nwc) in chunk {
                     if let Err(e) = pay_subscription(
                         sub.clone(),
+                        nwc.clone(),
                         &user_keys,
                         &lnurls,
                         &pay_cache,
-                        &db_pool,
                         &lnurl_client,
-                        xpriv,
                         &keys,
                         &mut successful,
                         &client,
@@ -205,12 +223,11 @@ pub async fn start_subscription_handler(
 
 async fn pay_subscription(
     sub: SubscriptionConfig,
+    nwc: NostrWalletConnectURI,
     user_keys: &HashMap<i32, XOnlyPublicKey>,
     lnurls: &HashMap<XOnlyPublicKey, LnUrlCacheResult>,
     pay_cache: &Mutex<HashMap<LnUrl, PayResponse>>,
-    db_pool: &Pool<ConnectionManager<PgConnection>>,
     lnurl_client: &AsyncClient,
-    xpriv: ExtendedPrivKey,
     keys: &Keys,
     successful: &mut Vec<(SentInvoice, NostrWalletConnectURI, SubscriptionConfig)>,
     client: &Client,
@@ -237,16 +254,6 @@ async fn pay_subscription(
     };
     let tried_lnurl = lnurl.0.clone();
     let amount_msats = sub.amount_msats();
-
-    let (user_nwc_key, relay) = if let Some(auth_index) = sub.auth_index {
-        let mut conn = db_pool.get()?;
-        let (key, relay) = WalletAuth::get_user_data(&mut conn, auth_index)?
-            .ok_or(anyhow!("No user pubkey found"))?;
-        (Some(key), relay)
-    } else {
-        (None, None)
-    };
-    let nwc = sub.nwc(xpriv, user_nwc_key, relay.as_deref());
 
     match crate::profile_handler::pay_to_lnurl(
         keys,

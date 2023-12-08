@@ -87,7 +87,7 @@ impl SubscriptionConfig {
                 )
                 .unwrap()
             }
-            _ => panic!("Invalid ZapConfig"),
+            _ => panic!("Invalid SubscriptionConfig"),
         }
     }
 

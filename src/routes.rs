@@ -1104,6 +1104,62 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_create_subscription_overwrite_with_auth() {
+        let state = init_state();
+        clear_database(&state);
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+
+        let payload = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 21,
+            time_period: SubscriptionPeriod::Day,
+            nwc: Some(nwc),
+            auth_id: None,
+        };
+
+        let current = create_user_subscription_impl(payload, &state)
+            .await
+            .unwrap();
+        assert_eq!(current.subscriptions.len(), 1);
+
+        let mut conn = state.db_pool.get().unwrap();
+        let configs = get_user_subscriptions_impl(&mut conn, npub).unwrap();
+        assert_eq!(configs.len(), 1);
+
+        let uri = wallet_auth_impl(&state, None).await.unwrap();
+
+        // set dummy pubkey
+        WalletAuth::add_user_data(
+            &mut state.db_pool.get().unwrap(),
+            uri.public_key,
+            npub,
+            None,
+        )
+        .unwrap();
+
+        let payload = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 21,
+            time_period: SubscriptionPeriod::Day,
+            nwc: None,
+            auth_id: Some(uri.public_key),
+        };
+
+        let current = create_user_subscription_impl(payload, &state)
+            .await
+            .unwrap();
+        assert_eq!(current.subscriptions.len(), 1);
+
+        clear_database(&state);
+    }
+
+    #[tokio::test]
     async fn test_delete_zap_config() {
         let state = init_state();
         clear_database(&state);

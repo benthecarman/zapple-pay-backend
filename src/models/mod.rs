@@ -167,6 +167,16 @@ pub fn upsert_subscription(
             last_paid: None,
         };
 
+        match (sub_config.nwc.as_ref(), sub_config.auth_index.as_ref()) {
+            (None, None) => {
+                error!("sub_config.nwc and sub_config.auth_index are both None, this should never happen");
+            },
+            (Some(nwc), Some(auth_index)) => {
+                error!("sub_config.nwc {nwc} and sub_config.auth_index {auth_index} are both Some, this should never happen");
+            },
+            _ => {} // expected
+        }
+
         diesel::insert_into(schema::subscription_configs::table)
             .values(&sub_config)
             .on_conflict(on_constraint("subscription_configs_user_id_to_npub_unique"))
@@ -327,4 +337,165 @@ pub fn delete_subscribed_user(
 
         Ok(count)
     })
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::nip49::SubscriptionPeriod;
+    use bitcoin::secp256k1::SECP256K1;
+    use bitcoin::util::bip32::ExtendedPrivKey;
+    use bitcoin::Network;
+    use diesel_migrations::MigrationHarness;
+    use nostr::prelude::NostrWalletConnectURI;
+
+    const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
+    const PUBKEY2: &str = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2";
+    const NWC: &str = "nostr+walletconnect://246be70a7e4966f138e9e48401f33c32a1c428bbfb7aab42e3946beb8bc15e7c?relay=wss%3A%2F%2Fnostr.mutinywallet.com%2F&secret=23ea701003500d852ba2756460099217f839e1fbc9665e493b56bd2d5912e31b";
+
+    fn init_db() -> PgConnection {
+        dotenv::dotenv().ok();
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let mut conn = PgConnection::establish(&url).expect("Could not connect to database");
+
+        conn.run_pending_migrations(MIGRATIONS)
+            .expect("migrations could not run");
+
+        clear_database(&mut conn);
+
+        conn
+    }
+
+    fn clear_database(conn: &mut PgConnection) {
+        conn.transaction::<_, anyhow::Error, _>(|conn| {
+            diesel::delete(schema::zap_events::table).execute(conn)?;
+            diesel::delete(schema::donations::table).execute(conn)?;
+            diesel::delete(schema::subscription_configs::table).execute(conn)?;
+            diesel::delete(schema::zap_configs::table).execute(conn)?;
+            diesel::delete(schema::users::table).execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_create_subscription() {
+        let mut conn = init_db();
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
+
+        let config = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 100,
+            time_period: SubscriptionPeriod::Day,
+            nwc: Some(nwc.clone()),
+            auth_id: None,
+        };
+
+        upsert_subscription(&mut conn, config).unwrap();
+
+        let config = SubscriptionConfig::get_by_pubkey_and_to_npub(&mut conn, &npub, &to_npub)
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.amount, 100);
+        assert_eq!(config.time_period(), SubscriptionPeriod::Day);
+        assert_eq!(config.nwc(xpriv, None, None), nwc);
+
+        clear_database(&mut conn)
+    }
+
+    #[test]
+    fn test_create_subscription_nwa() {
+        let mut conn = init_db();
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
+
+        // setup wallet auth
+        let wallet_auth = WalletAuth::create(&mut conn, xpriv).unwrap();
+        let auth_id = wallet_auth.pubkey();
+        let user_data = WalletAuth::get_user_data(&mut conn, wallet_auth.index).unwrap();
+        assert_eq!(user_data, None);
+        let user_pubkey = XOnlyPublicKey::from_slice(&[2; 32]).unwrap();
+        WalletAuth::add_user_data(&mut conn, auth_id, user_pubkey, None).unwrap();
+
+        let config = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 100,
+            time_period: SubscriptionPeriod::Day,
+            nwc: None,
+            auth_id: Some(auth_id),
+        };
+
+        upsert_subscription(&mut conn, config).unwrap();
+
+        let config = SubscriptionConfig::get_by_pubkey_and_to_npub(&mut conn, &npub, &to_npub)
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.amount, 100);
+        assert_eq!(config.time_period(), SubscriptionPeriod::Day);
+        let nwc = config.nwc(xpriv, Some(user_pubkey), None);
+        assert_eq!(nwc.public_key, user_pubkey);
+        assert_eq!(nwc.secret.x_only_public_key(SECP256K1).0, auth_id);
+
+        clear_database(&mut conn)
+    }
+
+    #[test]
+    fn test_create_subscription_overwrite_with_nwa() {
+        let mut conn = init_db();
+
+        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
+
+        // create subscription with nwc
+        let config = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 100,
+            time_period: SubscriptionPeriod::Day,
+            nwc: Some(nwc.clone()),
+            auth_id: None,
+        };
+        upsert_subscription(&mut conn, config).unwrap();
+
+        // setup wallet auth
+        let wallet_auth = WalletAuth::create(&mut conn, xpriv).unwrap();
+        let auth_id = wallet_auth.pubkey();
+        let user_pubkey = XOnlyPublicKey::from_slice(&[2; 32]).unwrap();
+        let relay = "wss://nostr.mutinywallet.com/".to_string();
+        WalletAuth::add_user_data(&mut conn, auth_id, user_pubkey, Some(relay.clone())).unwrap();
+
+        // overwrite subscription with NWA
+        let config = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 99,
+            time_period: SubscriptionPeriod::Week,
+            nwc: None,
+            auth_id: Some(auth_id),
+        };
+        upsert_subscription(&mut conn, config).unwrap();
+
+        let config = SubscriptionConfig::get_by_pubkey_and_to_npub(&mut conn, &npub, &to_npub)
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.amount, 99);
+        assert_eq!(config.time_period(), SubscriptionPeriod::Week);
+        let new_nwc = config.nwc(xpriv, Some(user_pubkey), Some(&relay));
+        assert_eq!(new_nwc.public_key, user_pubkey);
+        assert_eq!(new_nwc.secret.x_only_public_key(SECP256K1).0, auth_id);
+        assert_eq!(new_nwc.relay_url.to_string(), relay);
+        assert_ne!(new_nwc, nwc);
+
+        clear_database(&mut conn)
+    }
 }

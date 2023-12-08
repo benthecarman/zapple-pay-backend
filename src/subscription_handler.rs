@@ -116,8 +116,8 @@ pub async fn start_subscription_handler(
                 // sleep for 3 seconds between chunks
                 if !first {
                     tokio::time::sleep(Duration::from_secs(3)).await;
+                    first = false;
                 }
-                first = false;
 
                 // pay subscriptions in chunk
                 for sub in chunk {

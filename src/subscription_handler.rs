@@ -106,8 +106,8 @@ pub async fn start_subscription_handler(
 
         let subs_by_relay = subscriptions
             .into_iter()
-            .sorted_by_key(|(_, nwc)| nwc.relay_url.clone())
-            .group_by(|(_, nwc)| nwc.relay_url.clone())
+            .sorted_by_key(|(sub, _)| sub.relay_url())
+            .group_by(|(sub, _)| sub.relay_url())
             .into_iter()
             .map(|(url, subs)| (url, subs.collect::<Vec<_>>()))
             .collect::<Vec<_>>();

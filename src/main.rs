@@ -133,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Webserver running on http://{addr}");
 
     let server_router = Router::new()
+        .route("/.well-known/nostr.json", get(nip05))
         .route("/wallet-auth", get(wallet_auth))
         .route("/check-wallet-auth", get(check_wallet_auth))
         .route("/set-user", post(set_user_config))

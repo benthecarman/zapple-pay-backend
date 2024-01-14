@@ -30,6 +30,18 @@ pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"))
 }
 
+pub async fn nip05(
+    Extension(state): Extension<State>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let npub = state.server_keys.public_key().to_hex();
+    let json = json!({"names": {
+        "_": npub,
+        "zapplepay": npub,
+    }});
+
+    Ok(Json(json))
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct UserConfigs {
     zaps: Vec<SetUserConfig>,

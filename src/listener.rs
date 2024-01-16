@@ -182,6 +182,8 @@ async fn handle_event(
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
+    event.verify()?;
+
     match event.kind {
         Kind::ParameterizedReplaceable(33194) => handle_auth_response(db_pool, xpriv, event).await,
         Kind::WalletConnectResponse => handle_nwc_response(db_pool, event).await,

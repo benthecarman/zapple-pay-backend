@@ -14,9 +14,9 @@ pub struct Config {
     /// Relay to connect to, can be specified multiple times
     pub relay: Vec<String>,
     #[clap(default_value = "0.0.0.0", long)]
-    /// Bind address for zap-tunnel's webserver
+    /// Bind address for zapple-pay's webserver
     pub bind: String,
     #[clap(default_value_t = 3000, long)]
-    /// Port for zap-tunnel's webserver
+    /// Port for zapple-pay's webserver
     pub port: u16,
 }

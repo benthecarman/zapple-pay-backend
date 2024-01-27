@@ -1,8 +1,7 @@
 use crate::LnUrlCacheResult;
 use anyhow::anyhow;
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::hashes::Hash;
-use bitcoin::XOnlyPublicKey;
+use bitcoin::key::XOnlyPublicKey;
+use bitcoin::secp256k1::ThirtyTwoByteHash;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
@@ -10,13 +9,13 @@ use lnurl::pay::PayResponse;
 use lnurl::LnUrlResponse::LnUrlPayResponse;
 use lnurl::{AsyncClient, Builder};
 use log::*;
+use nostr::nips::nip04::encrypt;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
-use nostr::prelude::{encrypt, PayInvoiceRequestParams, ToBech32};
-use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp, Url};
+use nostr::prelude::{PayInvoiceRequestParams, ToBech32};
+use nostr::{Event, EventBuilder, EventId, JsonUtil, Keys, Kind, Metadata, Tag, Timestamp, Url};
 use nostr_sdk::Client;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -29,9 +28,9 @@ pub struct SentInvoice {
 pub async fn get_user_lnurl(
     user_key: XOnlyPublicKey,
     lnurl_cache: &Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>,
-    client: &Client,
+    lnurl_client: &AsyncClient,
 ) -> anyhow::Result<(LnUrl, Option<LnUrl>)> {
-    let (cache_result, timestamp) = {
+    let (cache_result, _timestamp) = {
         let cache = lnurl_cache.lock().await;
         let cache = cache.get(&user_key);
         match cache {
@@ -62,67 +61,40 @@ pub async fn get_user_lnurl(
         None => {
             debug!("No lnurl in cache, fetching...");
 
-            let mut metadata_filter = Filter::new()
-                .kind(Kind::Metadata)
-                .author(user_key.to_hex())
-                .limit(1);
-
-            if let Some(timestamp) = timestamp {
-                metadata_filter = metadata_filter.since(Timestamp::from(timestamp));
-            }
-
-            let timeout = Duration::from_secs(20);
-            let events = client
-                .get_events_of(vec![metadata_filter], Some(timeout))
-                .await?;
+            let metadata = get_nostr_profile(lnurl_client, user_key).await?;
 
             let mut lnurl: Option<LnUrl> = None;
             let mut lnurl2: Option<LnUrl> = None;
 
-            for event in events {
-                if event.pubkey == user_key && event.kind == Kind::Metadata {
-                    let json: Value = serde_json::from_str(&event.content)?;
-                    if let Value::Object(map) = json {
-                        // try parse lightning address
-                        let lud16 = map
-                            .get("lud16")
-                            .and_then(|v| v.as_str())
-                            .and_then(|s| LightningAddress::from_str(s).ok());
-                        if let Some(lnaddr) = lud16 {
-                            lnurl = Some(lnaddr.lnurl());
-                        }
+            // try parse lightning address
+            let lud16 = metadata
+                .lud16
+                .and_then(|s| LightningAddress::from_str(&s).ok());
+            if let Some(lnaddr) = lud16 {
+                lnurl = Some(lnaddr.lnurl());
+            }
 
-                        // try parse lnurl pay
-                        let lud06 = map
-                            .get("lud06")
-                            .and_then(|v| v.as_str())
-                            .and_then(|s| LnUrl::from_str(s).ok());
-                        if let Some(url) = lud06 {
-                            if lnurl.is_some() {
-                                lnurl2 = Some(url);
-                            } else {
-                                lnurl = Some(url);
-                            }
-                        }
-
-                        if lnurl.is_some() {
-                            break;
-                        }
-
-                        let mut cache = lnurl_cache.lock().await;
-                        cache.insert(
-                            user_key,
-                            LnUrlCacheResult::Timestamp(event.created_at.as_u64()),
-                        );
-
-                        return Err(anyhow!("Profile has no lnurl or lightning address"));
-                    }
+            // try parse lnurl pay
+            let lud06 = metadata.lud06.and_then(|s| LnUrl::from_str(&s).ok());
+            if let Some(url) = lud06 {
+                if lnurl.is_some() {
+                    lnurl2 = Some(url);
+                } else {
+                    lnurl = Some(url);
                 }
             }
 
             // handle None case
             let lnurl: LnUrl = match lnurl {
-                None => return Err(anyhow!("No lnurl found")),
+                None => {
+                    let mut cache = lnurl_cache.lock().await;
+                    cache.insert(
+                        user_key,
+                        LnUrlCacheResult::Timestamp(Timestamp::now().as_u64()),
+                    );
+
+                    return Err(anyhow!("Profile has no lnurl or lightning address"));
+                }
                 Some(lnurl) => lnurl,
             };
 
@@ -194,19 +166,31 @@ async fn get_invoice_from_lnurl(
         None => None,
         Some(to_user) => {
             let mut tags = vec![
-                Tag::PubKey(to_user, None),
-                Tag::Amount(amount_msats),
+                Tag::PublicKey {
+                    public_key: to_user,
+                    relay_url: None,
+                    alias: None,
+                    uppercase: false,
+                },
+                Tag::Amount {
+                    millisats: amount_msats,
+                    bolt11: None,
+                },
                 Tag::Lnurl(lnurl.to_string()),
                 Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
             ];
             if let Some(event_id) = event_id {
-                tags.push(Tag::Event(event_id, None, None));
+                tags.push(Tag::Event {
+                    event_id,
+                    relay_url: None,
+                    marker: None,
+                });
             }
             if let Some(a_tag) = a_tag {
                 tags.push(a_tag);
             }
             let content = format!("From: nostr:{}", from_user.to_bech32().unwrap());
-            EventBuilder::new(Kind::ZapRequest, content, &tags)
+            EventBuilder::new(Kind::ZapRequest, content, tags)
                 .to_event(keys)
                 .ok()
         }
@@ -313,7 +297,7 @@ pub async fn pay_to_lnurl(
     let event = create_nwc_request(&nwc, invoice.to_string());
 
     let sent = SentInvoice {
-        payment_hash: invoice.payment_hash().into_inner(),
+        payment_hash: invoice.payment_hash().into_32(),
         event_id: event.id,
     };
 
@@ -323,16 +307,6 @@ pub async fn pay_to_lnurl(
             let keys = Keys::new(nwc.secret);
             let client = Client::new(&keys);
 
-            let proxy = if nwc
-                .relay_url
-                .host_str()
-                .is_some_and(|h| h.ends_with(".onion"))
-            {
-                Some(SocketAddr::from_str("127.0.0.1:9050")?)
-            } else {
-                None
-            };
-
             let relay_url =
                 if nwc.relay_url == Url::from_str("ws://alby-mainnet-nostr-relay/v1").unwrap() {
                     Url::from_str("wss://relay.getalby.com/v1").unwrap()
@@ -340,7 +314,7 @@ pub async fn pay_to_lnurl(
                     nwc.relay_url.clone()
                 };
 
-            client.add_relay(&relay_url, proxy).await?;
+            client.add_relay(&relay_url).await?;
             client.connect().await;
 
             let id = client.send_event(event).await?;
@@ -361,9 +335,37 @@ fn create_nwc_request(nwc: &NostrWalletConnectURI, invoice: String) -> Event {
     };
 
     let encrypted = encrypt(&nwc.secret, &nwc.public_key, req.as_json()).unwrap();
-    let p_tag = Tag::PubKey(nwc.public_key, None);
+    let p_tag = Tag::public_key(nwc.public_key);
 
-    EventBuilder::new(Kind::WalletConnectRequest, encrypted, &[p_tag])
+    EventBuilder::new(Kind::WalletConnectRequest, encrypted, [p_tag])
         .to_event(&Keys::new(nwc.secret))
         .unwrap()
+}
+
+async fn get_nostr_profile(
+    lnurl_client: &AsyncClient,
+    pubkey: XOnlyPublicKey,
+) -> anyhow::Result<Metadata> {
+    let body = json!(["user_profile", { "pubkey": pubkey.to_string() } ]);
+    let data: Vec<Value> = lnurl_client
+        .client
+        .post("https://cache2.primal.net/api")
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    if let Some(json) = data.first().cloned() {
+        let event: Event = serde_json::from_value(json)?;
+        if event.kind != Kind::Metadata {
+            anyhow::bail!("Did not find user's profile");
+        }
+
+        let metadata: Metadata = serde_json::from_str(&event.content)?;
+        return Ok(metadata);
+    }
+
+    Err(anyhow!("No data for user's profile"))
 }

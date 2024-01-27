@@ -1,7 +1,6 @@
-use bitcoin::hashes::hex::ToHex;
+use bitcoin::bip32::ExtendedPrivKey;
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::util::bip32::ExtendedPrivKey;
-use bitcoin::XOnlyPublicKey;
+use nostr::key::XOnlyPublicKey;
 
 pub fn map_emoji(emoji: &str) -> Option<&str> {
     match emoji {
@@ -18,7 +17,7 @@ pub(crate) fn calculate_nwa_secret(xpriv: ExtendedPrivKey, public_key: XOnlyPubl
 
     let hash = sha256::Hash::hash(&bytes);
 
-    let mut str = hash.to_hex();
+    let mut str = hash.to_string();
     // Truncate to 16 characters, we don't need the full hash
     // and it keeps the QR code smaller
     str.truncate(16);

@@ -10,8 +10,7 @@ use crate::routes::*;
 use axum::http::{Method, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{http, Extension, Router};
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::util::bip32::ExtendedPrivKey;
+use bitcoin::bip32::ExtendedPrivKey;
 use bitcoin::Network;
 use clap::Parser;
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -47,7 +46,7 @@ const DEFAULT_AUTH_RELAY: &str = "wss://relay.damus.io";
 #[derive(Clone)]
 pub struct State {
     db_pool: Pool<ConnectionManager<PgConnection>>,
-    pubkey_channel: Arc<Mutex<Sender<Vec<String>>>>,
+    pubkey_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
     secret_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
     auth_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
     pub server_keys: Keys,
@@ -85,17 +84,14 @@ async fn main() -> anyhow::Result<()> {
 
     let keys = get_keys(keys_path);
 
-    let mut pubkeys = User::get_all_npubs(&mut connection)?
-        .into_iter()
-        .map(|u| u.to_hex())
-        .collect::<Vec<_>>();
+    let mut pubkeys = User::get_all_npubs(&mut connection)?;
     pubkeys.sort();
 
     let mut secrets = ZapConfig::get_nwc_secrets(&mut connection)?;
     let subscription_secrets = SubscriptionConfig::get_nwc_secrets(&mut connection)?;
     let auth_pubkeys = WalletAuth::get_pubkeys(&mut connection)?;
     secrets.extend(subscription_secrets);
-    secrets.sort();
+    secrets.sort_by_key(|s| s.secret_bytes());
     secrets.dedup();
     let subscription_to_npubs = SubscriptionConfig::get_to_npubs(&mut connection)?;
     let unlinked = WalletAuth::get_unlinked(&mut connection)?;
@@ -104,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     // convert to pubkeys and hex
     let mut secrets = secrets
         .into_iter()
-        .map(|s| s.x_only_public_key(SECP256K1).0)
+        .map(|s| s.x_only_public_key(&SECP256K1).0)
         .collect::<Vec<_>>();
     secrets.extend(auth_pubkeys);
 
@@ -229,13 +225,8 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tokio::spawn(async move {
-        match subscription_handler::populate_lnurl_cache(
-            subscription_to_npubs,
-            &config.relay,
-            keys.server_keys(),
-            lnurl_cache.clone(),
-        )
-        .await
+        match subscription_handler::populate_lnurl_cache(subscription_to_npubs, lnurl_cache.clone())
+            .await
         {
             Ok(_) => info!("populated lnurl cache"),
             Err(e) => error!("populate lnurl cache error: {e}"),
@@ -244,7 +235,6 @@ async fn main() -> anyhow::Result<()> {
             if let Err(e) = subscription_handler::start_subscription_handler(
                 keys.server_keys(),
                 state.xpriv,
-                config.relay.clone(),
                 state.db_pool.clone(),
                 lnurl_cache.clone(),
                 pay_cache.clone(),

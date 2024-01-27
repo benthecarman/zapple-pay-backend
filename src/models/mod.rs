@@ -4,8 +4,7 @@ use crate::models::user::NewUser;
 use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::{NewZapConfig, ZapConfig};
 use crate::routes::{CreateUserSubscription, SetUserConfig};
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::XOnlyPublicKey;
+use bitcoin::key::XOnlyPublicKey;
 use diesel::prelude::*;
 use diesel::result::Error;
 use diesel::upsert::on_constraint;
@@ -69,7 +68,7 @@ pub fn upsert_user(conn: &mut PgConnection, config: SetUserConfig) -> anyhow::Re
         };
 
         let user = NewUser {
-            npub: &config.npub.to_hex(),
+            npub: &config.npub.to_string(),
         };
 
         let user_id: i32 = diesel::insert_into(schema::users::table)
@@ -119,7 +118,7 @@ pub fn upsert_user(conn: &mut PgConnection, config: SetUserConfig) -> anyhow::Re
                     config_id,
                     lnurl: donate_config.lnurl,
                     amount: donate_config.amount_sats as i32,
-                    npub: donate_config.npub.map(|x| x.to_hex()),
+                    npub: donate_config.npub.map(|x| x.to_string()),
                 })
                 .collect::<Vec<_>>();
 
@@ -146,7 +145,7 @@ pub fn upsert_subscription(
         };
 
         let user = NewUser {
-            npub: &config.npub.to_hex(),
+            npub: &config.npub.to_string(),
         };
 
         let user_id: i32 = diesel::insert_into(schema::users::table)
@@ -159,7 +158,7 @@ pub fn upsert_subscription(
 
         let sub_config = NewSubscriptionConfig {
             user_id,
-            to_npub: &config.to_npub.to_hex(),
+            to_npub: &config.to_npub.to_string(),
             amount: config.amount_sats as i32,
             time_period: &config.time_period.to_string(),
             nwc: config.nwc.map(|x| x.to_string()),
@@ -248,7 +247,7 @@ pub fn delete_user(conn: &mut PgConnection, npub: XOnlyPublicKey) -> anyhow::Res
         use schema::{donations, subscription_configs, users, zap_configs};
 
         let user = users::table
-            .filter(users::npub.eq(npub.to_hex()))
+            .filter(users::npub.eq(npub.to_string()))
             .first::<user::User>(conn)
             .optional()?;
 
@@ -271,7 +270,7 @@ pub fn delete_user(conn: &mut PgConnection, npub: XOnlyPublicKey) -> anyhow::Res
         )
         .execute(conn)?;
 
-        diesel::delete(users::table.filter(users::npub.eq(npub.to_hex()))).execute(conn)?;
+        diesel::delete(users::table.filter(users::npub.eq(npub.to_string()))).execute(conn)?;
 
         Ok(())
     })
@@ -343,11 +342,11 @@ pub fn delete_subscribed_user(
 mod test {
     use super::*;
     use crate::nip49::SubscriptionPeriod;
-    use bitcoin::secp256k1::SECP256K1;
-    use bitcoin::util::bip32::ExtendedPrivKey;
+    use bitcoin::bip32::ExtendedPrivKey;
     use bitcoin::Network;
     use diesel_migrations::MigrationHarness;
     use nostr::prelude::NostrWalletConnectURI;
+    use nostr::SECP256K1;
 
     const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
     const PUBKEY2: &str = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2";
@@ -442,7 +441,7 @@ mod test {
         assert_eq!(config.time_period(), SubscriptionPeriod::Day);
         let nwc = config.nwc(xpriv, Some(user_pubkey), None);
         assert_eq!(nwc.public_key, user_pubkey);
-        assert_eq!(nwc.secret.x_only_public_key(SECP256K1).0, auth_id);
+        assert_eq!(nwc.secret.x_only_public_key(&SECP256K1).0, auth_id);
 
         clear_database(&mut conn)
     }
@@ -492,7 +491,7 @@ mod test {
         assert_eq!(config.time_period(), SubscriptionPeriod::Week);
         let new_nwc = config.nwc(xpriv, Some(user_pubkey), Some(&relay));
         assert_eq!(new_nwc.public_key, user_pubkey);
-        assert_eq!(new_nwc.secret.x_only_public_key(SECP256K1).0, auth_id);
+        assert_eq!(new_nwc.secret.x_only_public_key(&SECP256K1).0, auth_id);
         assert_eq!(new_nwc.relay_url.to_string(), relay);
         assert_ne!(new_nwc, nwc);
 

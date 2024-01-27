@@ -1,9 +1,8 @@
 use crate::nip49::{SubscriptionPeriod, ALL_SUBSCRIPTION_PERIODS};
 use crate::DEFAULT_AUTH_RELAY;
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::util::bip32::{ChildNumber, ExtendedPrivKey};
-use bitcoin::XOnlyPublicKey;
+use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
 use diesel::prelude::*;
+use nostr::key::XOnlyPublicKey;
 use nostr::prelude::{NostrWalletConnectURI, SecretKey};
 use nostr::{Url, SECP256K1};
 use serde::{Deserialize, Serialize};
@@ -73,7 +72,7 @@ impl SubscriptionConfig {
             (None, Some(index)) => {
                 let secret = xpriv
                     .derive_priv(
-                        SECP256K1,
+                        &SECP256K1,
                         &[ChildNumber::from_hardened_idx(index as u32).unwrap()],
                     )
                     .unwrap()
@@ -82,7 +81,7 @@ impl SubscriptionConfig {
                 NostrWalletConnectURI::new(
                     user_public_key.expect("Missing user public key from database"),
                     Url::parse(relay.unwrap_or(DEFAULT_AUTH_RELAY)).unwrap(),
-                    Some(secret),
+                    secret,
                     None,
                 )
                 .unwrap()
@@ -145,7 +144,7 @@ impl SubscriptionConfig {
     ) -> anyhow::Result<Vec<Self>> {
         let configs = subscription_configs::table
             .inner_join(users::table)
-            .filter(users::npub.eq(pubkey.to_hex()))
+            .filter(users::npub.eq(pubkey.to_string()))
             .select(subscription_configs::all_columns)
             .load::<Self>(conn)?;
 
@@ -157,7 +156,7 @@ impl SubscriptionConfig {
         to_npub: &XOnlyPublicKey,
     ) -> anyhow::Result<Vec<Self>> {
         let configs = subscription_configs::table
-            .filter(subscription_configs::to_npub.eq(to_npub.to_hex()))
+            .filter(subscription_configs::to_npub.eq(to_npub.to_string()))
             .select(subscription_configs::all_columns)
             .load::<Self>(conn)?;
 
@@ -170,9 +169,9 @@ impl SubscriptionConfig {
         to_npub: &XOnlyPublicKey,
     ) -> anyhow::Result<Option<Self>> {
         Ok(subscription_configs::table
-            .filter(subscription_configs::to_npub.eq(to_npub.to_hex()))
+            .filter(subscription_configs::to_npub.eq(to_npub.to_string()))
             .inner_join(users::table)
-            .filter(users::npub.eq(pubkey.to_hex()))
+            .filter(users::npub.eq(pubkey.to_string()))
             .select(subscription_configs::all_columns)
             .first::<Self>(conn)
             .optional()?)

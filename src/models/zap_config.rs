@@ -1,8 +1,7 @@
 use crate::models::schema::zap_configs::dsl;
 use crate::DEFAULT_AUTH_RELAY;
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::util::bip32::{ChildNumber, ExtendedPrivKey};
-use bitcoin::XOnlyPublicKey;
+use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
+use bitcoin::key::XOnlyPublicKey;
 use diesel::prelude::*;
 use nostr::prelude::NostrWalletConnectURI;
 use nostr::secp256k1::SecretKey;
@@ -62,7 +61,7 @@ impl ZapConfig {
             (None, Some(index)) => {
                 let secret = xpriv
                     .derive_priv(
-                        SECP256K1,
+                        &SECP256K1,
                         &[ChildNumber::from_hardened_idx(index as u32).unwrap()],
                     )
                     .unwrap()
@@ -71,7 +70,7 @@ impl ZapConfig {
                 NostrWalletConnectURI::new(
                     user_public_key.expect("Missing user public key from database"),
                     Url::parse(relay.unwrap_or(DEFAULT_AUTH_RELAY)).unwrap(),
-                    Some(secret),
+                    secret,
                     None,
                 )
                 .unwrap()
@@ -102,7 +101,7 @@ impl ZapConfig {
             .map(|nwc| nwc.secret)
             .collect();
 
-        secrets.sort();
+        secrets.sort_by_key(|s| s.secret_bytes());
         secrets.dedup();
 
         Ok(secrets)
@@ -136,7 +135,7 @@ impl ZapConfig {
     ) -> anyhow::Result<Vec<Self>> {
         let configs = zap_configs::table
             .inner_join(users::table)
-            .filter(users::npub.eq(pubkey.to_hex()))
+            .filter(users::npub.eq(pubkey.to_string()))
             .select(dsl::zap_configs::all_columns())
             .load::<Self>(conn)?;
 
@@ -154,7 +153,7 @@ impl ZapConfig {
 
         Ok(table
             .inner_join(users::table)
-            .filter(users::npub.eq(pubkey.to_hex()))
+            .filter(users::npub.eq(pubkey.to_string()))
             .select(dsl::zap_configs::all_columns())
             .first::<Self>(conn)
             .optional()?)

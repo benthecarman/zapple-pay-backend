@@ -1,7 +1,6 @@
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::util::bip32::{ChildNumber, ExtendedPrivKey};
-use bitcoin::XOnlyPublicKey;
+use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
 use diesel::prelude::*;
+use nostr::key::XOnlyPublicKey;
 use nostr::SECP256K1;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -64,18 +63,18 @@ impl WalletAuth {
             // Derive the pubkey for the next index
             let (derived_pubkey, _) = xpriv
                 .derive_priv(
-                    SECP256K1,
+                    &SECP256K1,
                     &[ChildNumber::from_hardened_idx(next_index as u32).unwrap()],
                 )
                 .unwrap()
                 .private_key
-                .x_only_public_key(SECP256K1);
+                .x_only_public_key(&SECP256K1);
 
             // Now, you can insert the row with the reserved `index`, and the derived values
             let result = diesel::insert_into(wallet_auth::table)
                 .values((
                     wallet_auth::index.eq(next_index),
-                    wallet_auth::pubkey.eq(derived_pubkey.to_hex()),
+                    wallet_auth::pubkey.eq(derived_pubkey.to_string()),
                 ))
                 .get_result(conn)?;
 
@@ -90,9 +89,9 @@ impl WalletAuth {
         relay: Option<String>,
     ) -> anyhow::Result<()> {
         diesel::update(wallet_auth::table)
-            .filter(wallet_auth::pubkey.eq(pubkey.to_hex()))
+            .filter(wallet_auth::pubkey.eq(pubkey.to_string()))
             .set((
-                wallet_auth::user_pubkey.eq(user_pubkey.to_hex()),
+                wallet_auth::user_pubkey.eq(user_pubkey.to_string()),
                 wallet_auth::relay.eq(relay),
             ))
             .execute(conn)?;
@@ -109,7 +108,7 @@ impl WalletAuth {
     ) -> Result<Option<i32>, diesel::result::Error> {
         let id = wallet_auth::table
             .select(wallet_auth::index)
-            .filter(wallet_auth::pubkey.eq(pubkey.to_hex()))
+            .filter(wallet_auth::pubkey.eq(pubkey.to_string()))
             .filter(wallet_auth::user_pubkey.is_not_null())
             .first(conn)
             .optional()?;
@@ -123,7 +122,7 @@ impl WalletAuth {
     ) -> Result<Option<WalletAuth>, diesel::result::Error> {
         let id = wallet_auth::table
             .select(wallet_auth::all_columns)
-            .filter(wallet_auth::pubkey.eq(pubkey.to_hex()))
+            .filter(wallet_auth::pubkey.eq(pubkey.to_string()))
             .first(conn)
             .optional()?;
 
@@ -184,7 +183,7 @@ impl WalletAuth {
 mod test {
     use crate::models::wallet_auth::WalletAuth;
     use crate::models::MIGRATIONS;
-    use bitcoin::util::bip32::ExtendedPrivKey;
+    use bitcoin::bip32::ExtendedPrivKey;
     use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::{Connection, PgConnection, RunQueryDsl};
     use diesel_migrations::MigrationHarness;

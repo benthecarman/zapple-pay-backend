@@ -13,7 +13,6 @@ use diesel::{Connection, PgConnection};
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use log::*;
-use nostr::hashes::hex::ToHex;
 use nostr::key::XOnlyPublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
 use nostr::prelude::Method;
@@ -33,7 +32,7 @@ pub(crate) fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
 pub async fn nip05(
     Extension(state): Extension<State>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let npub = state.server_keys.public_key().to_hex();
+    let npub = state.server_keys.public_key().to_string();
     let json = json!({"names": {
         "_": npub,
         "zapplepay": npub,
@@ -147,9 +146,7 @@ async fn send_config_dm(
     amt: u64,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client
-        .add_relay("wss://nostr.mutinywallet.com", None)
-        .await?;
+    client.add_relay("wss://nostr.mutinywallet.com").await?;
     client.connect().await;
 
     let sats = if amt == 1 { "sat" } else { "sats" };
@@ -171,9 +168,7 @@ async fn send_subscription_dm(
     amt: u64,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client
-        .add_relay("wss://nostr.mutinywallet.com", None)
-        .await?;
+    client.add_relay("wss://nostr.mutinywallet.com").await?;
     client.connect().await;
 
     let sats = if amt == 1 { "sat" } else { "sats" };
@@ -196,9 +191,7 @@ async fn send_deleted_config_dm(
     emoji: String,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client
-        .add_relay("wss://nostr.mutinywallet.com", None)
-        .await?;
+    client.add_relay("wss://nostr.mutinywallet.com").await?;
     client.connect().await;
 
     let content =
@@ -218,9 +211,7 @@ async fn send_deleted_subscription_dm(
     to_npub: XOnlyPublicKey,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client
-        .add_relay("wss://nostr.mutinywallet.com", None)
-        .await?;
+    client.add_relay("wss://nostr.mutinywallet.com").await?;
     client.connect().await;
 
     let content = format!(
@@ -238,9 +229,7 @@ async fn send_deleted_subscription_dm(
 #[cfg(not(test))]
 async fn send_deleted_user_dm(keys: Keys, npub: XOnlyPublicKey) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client
-        .add_relay("wss://nostr.mutinywallet.com", None)
-        .await?;
+    client.add_relay("wss://nostr.mutinywallet.com").await?;
     client.connect().await;
 
     let content = String::from("You have deleted your Zapple Pay account.");
@@ -267,22 +256,21 @@ pub(crate) async fn set_user_config_impl(
     let npub = payload.npub;
     let amt = payload.amount_sats;
     let secret_key_pk = match payload.nwc.as_ref() {
-        Some(nwc) => nwc.secret.x_only_public_key(SECP256K1).0,
+        Some(nwc) => nwc.secret.x_only_public_key(&SECP256K1).0,
         None => payload.auth_id.unwrap(),
     };
     let mut conn = state.db_pool.get()?;
     crate::models::upsert_user(&mut conn, payload)?;
     drop(conn);
 
-    let npub_hex = npub.to_hex();
-    info!("New user: {npub_hex} {emoji_str} {amt}!");
+    info!("New user: {npub} {emoji_str} {amt}!");
     // notify new pubkey
     let keys = state.pubkey_channel.lock().await;
     keys.send_if_modified(|current| {
-        if current.contains(&npub_hex) {
+        if current.contains(&npub) {
             false
         } else {
-            current.push(npub_hex);
+            current.push(npub);
             true
         }
     });
@@ -328,7 +316,7 @@ pub(crate) async fn create_user_subscription_impl(
     let amt = payload.amount_sats;
     let period = payload.time_period;
     let secret_key_pk = match payload.nwc.as_ref() {
-        Some(nwc) => nwc.secret.x_only_public_key(SECP256K1).0,
+        Some(nwc) => nwc.secret.x_only_public_key(&SECP256K1).0,
         None => payload.auth_id.unwrap(),
     };
     let mut conn = state.db_pool.get()?;
@@ -346,9 +334,7 @@ pub(crate) async fn create_user_subscription_impl(
         }
     });
 
-    let npub_hex = npub.to_hex();
-    let to_npub_hex = to_npub.to_hex();
-    info!("New subscription: {npub_hex} -> {to_npub_hex} {amt} every {period}!");
+    info!("New subscription: {npub} -> {to_npub} {amt} every {period}!");
 
     #[cfg(not(test))]
     {
@@ -773,7 +759,7 @@ pub async fn wallet_auth(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let params = payload.map(|p| p.0);
     match wallet_auth_impl(&state, params).await {
-        Ok(uri) => Ok(Json(json!({"id": uri.public_key.to_hex(), "uri": uri}))),
+        Ok(uri) => Ok(Json(json!({"id": uri.public_key.to_string(), "uri": uri}))),
         Err(e) => Err(handle_anyhow_error(e)),
     }
 }
@@ -882,7 +868,7 @@ mod test {
     use crate::models::MIGRATIONS;
     use crate::routes::*;
     use crate::State;
-    use bitcoin::util::bip32::ExtendedPrivKey;
+    use bitcoin::bip32::ExtendedPrivKey;
     use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::{PgConnection, RunQueryDsl};
     use diesel_migrations::MigrationHarness;

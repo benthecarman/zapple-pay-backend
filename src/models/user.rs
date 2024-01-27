@@ -1,6 +1,5 @@
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
+use nostr::key::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -77,7 +76,7 @@ impl User {
         pubkey: &XOnlyPublicKey,
     ) -> anyhow::Result<Option<Self>> {
         Ok(users::table
-            .filter(users::npub.eq(pubkey.to_hex()))
+            .filter(users::npub.eq(pubkey.to_string()))
             .first::<Self>(conn)
             .optional()?)
     }

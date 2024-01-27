@@ -7,8 +7,7 @@ use crate::models::{schema, ConfigType};
 use crate::profile_handler::SentInvoice;
 use crate::LnUrlCacheResult;
 use anyhow::anyhow;
-use bitcoin::util::bip32::ExtendedPrivKey;
-use bitcoin::XOnlyPublicKey;
+use bitcoin::bip32::ExtendedPrivKey;
 use chrono::{Timelike, Utc};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::{Connection, ExpressionMethods, PgConnection, RunQueryDsl};
@@ -17,13 +16,12 @@ use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
 use log::*;
+use nostr::key::XOnlyPublicKey;
 use nostr::prelude::NostrWalletConnectURI;
 use nostr::prelude::ToBech32;
 use nostr::Keys;
 use nostr_sdk::Client;
 use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -31,7 +29,6 @@ use tokio::sync::Mutex;
 pub async fn start_subscription_handler(
     keys: Keys,
     xpriv: ExtendedPrivKey,
-    relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
@@ -73,7 +70,7 @@ pub async fn start_subscription_handler(
         to_npubs.dedup();
 
         // populate lnurl cache
-        populate_lnurl_cache(to_npubs, &relays, keys.clone(), lnurl_cache.clone()).await?;
+        populate_lnurl_cache(to_npubs, lnurl_cache.clone()).await?;
 
         let lnurls = {
             let cache = lnurl_cache.lock().await;
@@ -119,13 +116,7 @@ pub async fn start_subscription_handler(
 
             let client = Client::new(&keys);
 
-            let proxy = if relay.host_str().is_some_and(|h| h.ends_with(".onion")) {
-                Some(SocketAddr::from_str("127.0.0.1:9050")?)
-            } else {
-                None
-            };
-
-            client.add_relay(relay, proxy).await?;
+            client.add_relay(relay).await?;
             client.connect().await;
 
             let mut first = true;
@@ -300,25 +291,17 @@ async fn sleep_until_next_min(start_second: u32) {
 
 pub async fn populate_lnurl_cache(
     to_npubs: Vec<XOnlyPublicKey>,
-    relays: &[String],
-    keys: Keys,
     lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
 ) -> anyhow::Result<()> {
-    let client = Client::new(&keys);
-    for relay in relays.iter() {
-        client.add_relay(relay.as_str(), None).await?;
-    }
-    client.connect().await;
+    let lnurl_client = Builder::default().build_async()?;
 
     // populate lnurl cache
     let mut futs = Vec::with_capacity(to_npubs.len());
     for to_npub in to_npubs {
-        let fut = crate::profile_handler::get_user_lnurl(to_npub, &lnurl_cache, &client);
+        let fut = crate::profile_handler::get_user_lnurl(to_npub, &lnurl_cache, &lnurl_client);
         futs.push(fut);
     }
     futures::future::join_all(futs).await;
-
-    client.disconnect().await?;
 
     Ok(())
 }

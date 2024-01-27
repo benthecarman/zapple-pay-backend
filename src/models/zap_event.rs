@@ -1,9 +1,8 @@
 use crate::models::ConfigType;
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::XOnlyPublicKey;
 use chrono::NaiveDateTime;
 use diesel::dsl::sum;
 use diesel::prelude::*;
+use nostr::key::XOnlyPublicKey;
 use nostr::prelude::SecretKey;
 use nostr::{EventId, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -102,15 +101,17 @@ impl ZapEvent {
         payment_hash: [u8; 32],
         event_id: EventId,
     ) -> anyhow::Result<ZapEvent> {
-        let from_npub_str = from_npub.to_hex();
-        let to_npub_str = to_npub.to_hex();
+        let from_npub_str = from_npub.to_string();
+        let to_npub_str = to_npub.to_string();
+        let secret_key = hex::encode(secret_key.secret_bytes());
+        let payment_hash = hex::encode(payment_hash);
         let new_zap_event = NewZapEvent {
             from_npub: &from_npub_str,
             to_npub: &to_npub_str,
             config_type: &config_type.to_string(),
             amount,
-            secret_key: &secret_key.secret_bytes().to_hex(),
-            payment_hash: &payment_hash.to_hex(),
+            secret_key: secret_key.as_str(),
+            payment_hash: payment_hash.as_str(),
             event_id: &event_id.to_hex(),
         };
         let zap_event = diesel::insert_into(zap_events::table)

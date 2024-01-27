@@ -190,6 +190,9 @@ fn method_to_string(method: &Method) -> String {
         Method::MakeInvoice => "make_invoice",
         Method::LookupInvoice => "lookup_invoice",
         Method::GetBalance => "get_balance",
+        Method::PayKeysend => "pay_keysend",
+        Method::ListInvoices => "list_invoices",
+        Method::ListPayments => "list_payments",
     }
     .to_string()
 }

@@ -10,9 +10,9 @@ use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
 use crate::utils::map_emoji;
 use crate::{utils, LnUrlCacheResult};
 use anyhow::anyhow;
-use bitcoin::hashes::hex::{FromHex, ToHex};
+use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
+use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::Hash;
-use bitcoin::util::bip32::{ChildNumber, ExtendedPrivKey};
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::{Connection, PgConnection};
 use lnurl::lnurl::LnUrl;
@@ -21,14 +21,14 @@ use lnurl::{AsyncClient, Builder};
 use log::*;
 use nostr::hashes::sha256;
 use nostr::key::XOnlyPublicKey;
+use nostr::nips::nip04::decrypt;
 use nostr::nips::nip47::{Method, NIP47Error, Response, ResponseResult};
-use nostr::prelude::{decrypt, ErrorCode};
+use nostr::prelude::ErrorCode;
 use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp, SECP256K1};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,7 +38,7 @@ use tokio::sync::Mutex;
 pub async fn start_listener(
     mut relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
-    mut pubkey_receiver: Receiver<Vec<String>>,
+    mut pubkey_receiver: Receiver<Vec<XOnlyPublicKey>>,
     mut secret_receiver: Receiver<Vec<XOnlyPublicKey>>,
     mut auth_receiver: Receiver<Vec<XOnlyPublicKey>>,
     keys: Keys,
@@ -66,17 +66,12 @@ pub async fn start_listener(
             if relay.contains("localhost") {
                 continue;
             }
-            let proxy = if relay.contains(".onion") {
-                Some(SocketAddr::from_str("127.0.0.1:9050")?)
-            } else {
-                None
-            };
-            client.add_relay(relay.as_str(), proxy).await?;
+            client.add_relay(relay.as_str()).await?;
         }
         client.connect().await;
 
         let tagged: Vec<XOnlyPublicKey> = secret_receiver.borrow().clone();
-        let authors: Vec<String> = pubkey_receiver.borrow().clone();
+        let authors: Vec<XOnlyPublicKey> = pubkey_receiver.borrow().clone();
 
         let auth_keys: Vec<XOnlyPublicKey> = auth_receiver.borrow().clone();
 
@@ -112,11 +107,10 @@ pub async fn start_listener(
             tokio::select! {
                 Ok(notification) = notifications.recv() => {
                     match notification {
-                        RelayPoolNotification::Event(_url, event) => {
-                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| matches!(tag, Tag::PubKey(_, _) | Tag::Identifier(_))) {
+                        RelayPoolNotification::Event { event, .. } => {
+                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| matches!(tag, Tag::PublicKey { .. } | Tag::Identifier(_))) {
                                 tokio::spawn({
                                     let db_pool = db_pool.clone();
-                                    let client = client.clone();
                                     let lnurl_client = lnurl_client.clone();
                                     let keys = keys.clone();
                                     let lnurl_cache = lnurl_cache.clone();
@@ -124,7 +118,6 @@ pub async fn start_listener(
                                     async move {
                                         let fut = handle_event(
                                             &db_pool,
-                                            &client,
                                             &lnurl_client,
                                             event,
                                             &keys,
@@ -147,8 +140,8 @@ pub async fn start_listener(
                             break;
                         }
                         RelayPoolNotification::Stop => {}
-                        RelayPoolNotification::Message(_, _) => {}
-                    }
+                        RelayPoolNotification::Message { .. } => {}
+                        RelayPoolNotification::RelayStatus{ .. } => {}}
                 }
                 _ = pubkey_receiver.changed() => {
                     break;
@@ -157,7 +150,7 @@ pub async fn start_listener(
                     break;
                 }
                 _ = auth_receiver.changed() => {
-                    let auth_keys: Vec<String> = auth_receiver.borrow().iter().map(|x| x.to_hex()).collect();
+                    let auth_keys: Vec<String> = auth_receiver.borrow().iter().map(|x| x.to_string()).collect();
 
                     let auth = Filter::new()
                         .kind(Kind::ParameterizedReplaceable(33194))
@@ -174,7 +167,6 @@ pub async fn start_listener(
 
 async fn handle_event(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
-    client: &Client,
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
@@ -190,7 +182,6 @@ async fn handle_event(
         Kind::TextNote | Kind::Reaction => {
             handle_reaction(
                 db_pool,
-                client,
                 lnurl_client,
                 event,
                 keys,
@@ -203,7 +194,6 @@ async fn handle_event(
         Kind::Regular(1311) => {
             handle_live_chat(
                 db_pool,
-                client,
                 lnurl_client,
                 event,
                 keys,
@@ -274,12 +264,12 @@ async fn handle_auth_response(
 
     let secret = xpriv
         .derive_priv(
-            SECP256K1,
+            &SECP256K1,
             &[ChildNumber::from_hardened_idx(auth.index as u32).unwrap()],
         )
         .unwrap()
         .private_key;
-    let content = decrypt(&secret, &event.pubkey, event.content)?;
+    let content = decrypt(&secret, &event.pubkey, &event.content)?;
     let confirmation: NIP49Confirmation = serde_json::from_str(&content)?;
 
     if !confirmation.commands.contains(&Method::PayInvoice) {
@@ -307,8 +297,8 @@ async fn handle_nwc_response(
     let event_id = tags
         .iter()
         .find_map(|tag| {
-            if let Tag::Event(id, _, _) = tag {
-                Some(*id)
+            if let Tag::Event { event_id, .. } = tag {
+                Some(*event_id)
             } else {
                 None
             }
@@ -321,7 +311,7 @@ async fn handle_nwc_response(
         return Ok(());
     };
 
-    let content = decrypt(&zap_event.secret_key(), &event.pubkey, event.content)?;
+    let content = decrypt(&zap_event.secret_key(), &event.pubkey, &event.content)?;
     let response: ResponseNoType = serde_json::from_str(&content).map_err(|e| {
         error!("Error parsing response: {content}");
         e
@@ -376,7 +366,7 @@ async fn handle_nwc_response(
     if let Some(ResponseResult::PayInvoice(res)) = response.result {
         let preimage: [u8; 32] = FromHex::from_hex(&res.preimage)?;
 
-        if sha256::Hash::hash(&preimage).to_hex() == zap_event.payment_hash {
+        if sha256::Hash::hash(&preimage).to_string() == zap_event.payment_hash {
             debug!("Payment successful: {}", zap_event.payment_hash);
             ZapEvent::mark_zap_paid(&mut conn, event_id, event.created_at)?;
         } else {
@@ -389,7 +379,6 @@ async fn handle_nwc_response(
 
 async fn handle_live_chat(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
-    client: &Client,
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
@@ -400,16 +389,16 @@ async fn handle_live_chat(
     let mut tags = event.tags.clone();
     tags.reverse();
     let event_id = tags.iter().find_map(|tag| {
-        if let Tag::Event(id, _, _) = tag {
-            Some(*id)
+        if let Tag::Event { event_id, .. } = tag {
+            Some(*event_id)
         } else {
             None
         }
     });
 
     let p_tag = tags.iter().find_map(|tag| {
-        if let Tag::PubKey(p, _) = tag {
-            Some(p.to_owned())
+        if let Tag::PublicKey { public_key, .. } = tag {
+            Some(*public_key)
         } else {
             None
         }
@@ -445,7 +434,6 @@ async fn handle_live_chat(
         event_id,
         a_tag,
         db_pool,
-        client,
         lnurl_client,
         event,
         keys,
@@ -458,7 +446,6 @@ async fn handle_live_chat(
 
 async fn handle_reaction(
     db_pool: &Pool<ConnectionManager<PgConnection>>,
-    client: &Client,
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
@@ -469,16 +456,16 @@ async fn handle_reaction(
     let mut tags = event.tags.clone();
     tags.reverse();
     let event_id = tags.iter().find_map(|tag| {
-        if let Tag::Event(id, _, _) = tag {
-            Some(*id)
+        if let Tag::Event { event_id, .. } = tag {
+            Some(*event_id)
         } else {
             None
         }
     });
 
     let p_tag = tags.into_iter().find_map(|tag| {
-        if let Tag::PubKey(p, _) = tag {
-            Some(p)
+        if let Tag::PublicKey { public_key, .. } = tag {
+            Some(public_key)
         } else {
             None
         }
@@ -494,7 +481,6 @@ async fn handle_reaction(
         event_id,
         None,
         db_pool,
-        client,
         lnurl_client,
         event,
         keys,
@@ -510,7 +496,6 @@ async fn pay_user(
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     db_pool: &Pool<ConnectionManager<PgConnection>>,
-    client: &Client,
     lnurl_client: &AsyncClient,
     event: Event,
     keys: &Keys,
@@ -541,7 +526,7 @@ async fn pay_user(
 
         let nwc = user.zap_config.nwc(xpriv, user_nwc_key, relay.as_deref());
 
-        let lnurl = get_user_lnurl(user_key, &lnurl_cache, client).await?;
+        let lnurl = get_user_lnurl(user_key, &lnurl_cache, lnurl_client).await?;
 
         // pay to lnurl
         let sent = pay_to_lnurl(
@@ -565,7 +550,7 @@ async fn pay_user(
                 Some(lnurl) => ((lnurl, None), None),
                 None => {
                     let npub = donation.npub().unwrap();
-                    let lnurl = get_user_lnurl(npub, &lnurl_cache, client).await?;
+                    let lnurl = get_user_lnurl(npub, &lnurl_cache, lnurl_client).await?;
 
                     (lnurl, Some(npub))
                 }

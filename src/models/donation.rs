@@ -1,9 +1,8 @@
 use super::schema::donations;
 use crate::models::zap_config::ZapConfig;
-use bitcoin::hashes::hex::ToHex;
-use bitcoin::XOnlyPublicKey;
 use diesel::prelude::*;
 use lnurl::lnurl::LnUrl;
+use nostr::key::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -52,7 +51,7 @@ impl Donation {
             config_id,
             lnurl: lnurl.map(|l| l.to_string()),
             amount,
-            npub: npub.map(|n| n.to_hex()),
+            npub: npub.map(|n| n.to_string()),
         }
     }
 

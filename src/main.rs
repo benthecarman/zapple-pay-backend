@@ -41,7 +41,7 @@ mod routes;
 mod subscription_handler;
 mod utils;
 
-const DEFAULT_AUTH_RELAY: &str = "wss://relay.damus.io";
+const DEFAULT_AUTH_RELAY: &str = "wss://relay.mutinywallet.com";
 
 #[derive(Clone)]
 pub struct State {

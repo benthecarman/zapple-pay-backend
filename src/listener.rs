@@ -108,7 +108,7 @@ pub async fn start_listener(
                 Ok(notification) = notifications.recv() => {
                     match notification {
                         RelayPoolNotification::Event { event, .. } => {
-                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| matches!(tag, Tag::PublicKey { .. } | Tag::Identifier(_))) {
+                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| matches!(tag, Tag::PublicKey { uppercase: false, .. } | Tag::Identifier(_))) {
                                 tokio::spawn({
                                     let db_pool = db_pool.clone();
                                     let lnurl_client = lnurl_client.clone();
@@ -397,7 +397,12 @@ async fn handle_live_chat(
     });
 
     let p_tag = tags.iter().find_map(|tag| {
-        if let Tag::PublicKey { public_key, .. } = tag {
+        if let Tag::PublicKey {
+            public_key,
+            uppercase: false,
+            ..
+        } = tag
+        {
             Some(*public_key)
         } else {
             None
@@ -464,7 +469,12 @@ async fn handle_reaction(
     });
 
     let p_tag = tags.into_iter().find_map(|tag| {
-        if let Tag::PublicKey { public_key, .. } = tag {
+        if let Tag::PublicKey {
+            public_key,
+            uppercase: false,
+            ..
+        } = tag
+        {
             Some(public_key)
         } else {
             None

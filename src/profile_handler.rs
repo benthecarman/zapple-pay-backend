@@ -166,12 +166,7 @@ async fn get_invoice_from_lnurl(
         None => None,
         Some(to_user) => {
             let mut tags = vec![
-                Tag::PublicKey {
-                    public_key: to_user,
-                    relay_url: None,
-                    alias: None,
-                    uppercase: false,
-                },
+                Tag::public_key(to_user),
                 Tag::Amount {
                     millisats: amount_msats,
                     bolt11: None,

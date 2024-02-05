@@ -1,12 +1,25 @@
 use bitcoin::bip32::ExtendedPrivKey;
 use bitcoin::hashes::{sha256, Hash};
+use lazy_static::lazy_static;
 use nostr::key::XOnlyPublicKey;
+use regex::Regex;
+
+lazy_static! {
+    static ref LN_REG: Regex =
+        Regex::new(r"^\u{26A1}[\u{FE00}-\u{FE0F}]?$").expect("Invalid regex");
+}
 
 pub fn map_emoji(emoji: &str) -> Option<&str> {
     match emoji {
         "❤" | "+" | "" => Some("❤️"),
         "⚡️" => Some("⚡"),
-        _ => None,
+        str => {
+            if LN_REG.is_match(str) {
+                Some("⚡")
+            } else {
+                None
+            }
+        }
     }
 }
 

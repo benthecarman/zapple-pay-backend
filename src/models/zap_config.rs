@@ -1,4 +1,5 @@
 use crate::models::schema::zap_configs::dsl;
+use crate::utils::map_emoji;
 use crate::DEFAULT_AUTH_RELAY;
 use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
 use bitcoin::key::XOnlyPublicKey;
@@ -166,26 +167,28 @@ impl ZapConfig {
     }
 
     pub fn migrate_emojis(conn: &mut PgConnection) -> anyhow::Result<usize> {
-        let mut count = diesel::update(zap_configs::table)
-            .filter(zap_configs::emoji.eq("⚡️"))
-            .set(zap_configs::emoji.eq("⚡"))
-            .execute(conn)?;
+        conn.transaction(|conn| {
+            let all = zap_configs::table.load::<Self>(conn)?;
 
-        count += diesel::update(zap_configs::table)
-            .filter(zap_configs::emoji.eq(""))
-            .set(zap_configs::emoji.eq("❤️"))
-            .execute(conn)?;
+            let mut count: usize = 0;
+            for z in all {
+                if let Some(emoji) = map_emoji(&z.emoji) {
+                    if emoji != z.emoji {
+                        let updated = diesel::update(zap_configs::table)
+                            .filter(zap_configs::id.eq(z.id))
+                            .set(zap_configs::emoji.eq(emoji))
+                            .execute(conn)?;
 
-        count += diesel::update(zap_configs::table)
-            .filter(zap_configs::emoji.eq("+"))
-            .set(zap_configs::emoji.eq("❤️"))
-            .execute(conn)?;
+                        if updated > 1 {
+                            anyhow::bail!("Updated more rows than expected: {updated}");
+                        }
 
-        count += diesel::update(zap_configs::table)
-            .filter(zap_configs::emoji.eq("❤"))
-            .set(zap_configs::emoji.eq("❤️"))
-            .execute(conn)?;
+                        count += updated;
+                    }
+                }
+            }
 
-        Ok(count)
+            Ok(count)
+        })
     }
 }

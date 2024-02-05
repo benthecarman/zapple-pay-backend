@@ -83,22 +83,36 @@ pub async fn start_listener(
             Kind::ParameterizedReplaceable(33194),
         ];
 
-        let reactions = Filter::new()
-            .kinds(kinds.clone())
-            .authors(authors)
-            .since(Timestamp::now());
+        let now = Timestamp::now();
 
-        let responses = Filter::new()
-            .kind(Kind::WalletConnectResponse)
-            .pubkeys(tagged)
-            .since(Timestamp::now());
+        // filters for reactions
+        let mut filters: Vec<Filter> = authors
+            .chunks(250)
+            .map(|keys| {
+                Filter::new()
+                    .kinds(kinds.clone())
+                    .authors(keys.to_vec())
+                    .since(now)
+            })
+            .collect();
 
-        let auth = Filter::new()
-            .kind(Kind::ParameterizedReplaceable(33194))
-            .pubkeys(auth_keys)
-            .since(Timestamp::now());
+        // filters for responses
+        filters.extend(tagged.chunks(250).map(|keys| {
+            Filter::new()
+                .kind(Kind::WalletConnectResponse)
+                .pubkeys(keys.to_vec())
+                .since(now)
+        }));
 
-        client.subscribe(vec![reactions, responses, auth]).await;
+        // filters for NWA
+        filters.extend(auth_keys.chunks(250).map(|keys| {
+            Filter::new()
+                .kind(Kind::ParameterizedReplaceable(33194))
+                .pubkeys(keys.to_vec())
+                .since(now)
+        }));
+
+        client.subscribe(filters).await;
 
         info!("Listening for events...");
 

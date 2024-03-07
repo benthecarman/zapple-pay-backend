@@ -8,7 +8,7 @@ use crate::models::ConfigType;
 use crate::nip49::NIP49Confirmation;
 use crate::profile_handler::{get_user_lnurl, pay_to_lnurl};
 use crate::utils::map_emoji;
-use crate::{utils, LnUrlCacheResult};
+use crate::{utils, LnUrlCacheResult, DEFAULT_AUTH_RELAY};
 use anyhow::anyhow;
 use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
 use bitcoin::hashes::hex::FromHex;
@@ -56,6 +56,7 @@ pub async fn start_listener(
         let nwc_relays = ZapConfig::get_nwc_relays(&mut conn)?;
         drop(conn);
         relays.extend(nwc_relays.into_keys().map(|r| r.to_string()));
+        relays.push(DEFAULT_AUTH_RELAY.to_string());
         relays.sort();
         relays.dedup();
 

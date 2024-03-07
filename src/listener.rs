@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use itertools::Itertools;
 use tokio::sync::watch::Receiver;
 use tokio::sync::Mutex;
 
@@ -109,7 +110,7 @@ pub async fn start_listener(
         filters.extend(auth_keys.chunks(250).map(|keys| {
             Filter::new()
                 .kind(Kind::ParameterizedReplaceable(33194))
-                .pubkeys(keys.to_vec())
+                .identifiers(keys.iter().map(|k| k.to_string()).collect_vec())
                 .since(now)
         }));
 

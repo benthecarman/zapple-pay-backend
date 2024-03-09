@@ -111,7 +111,6 @@ pub async fn start_listener(
             Filter::new()
                 .kind(Kind::ParameterizedReplaceable(33194))
                 .identifiers(keys.iter().map(|k| k.to_string()).collect_vec())
-                .since(now)
         }));
 
         client.subscribe(filters).await;
@@ -170,8 +169,7 @@ pub async fn start_listener(
 
                     let auth = Filter::new()
                         .kind(Kind::ParameterizedReplaceable(33194))
-                        .identifiers(auth_keys)
-                        .since(Timestamp::now());
+                        .identifiers(auth_keys);
                     client.subscribe(vec![auth]).await;
                 }
             }

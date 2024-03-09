@@ -15,6 +15,7 @@ use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::Hash;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::{Connection, PgConnection};
+use itertools::Itertools;
 use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
@@ -32,7 +33,6 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use itertools::Itertools;
 use tokio::sync::watch::Receiver;
 use tokio::sync::Mutex;
 
@@ -80,9 +80,9 @@ pub async fn start_listener(
         let kinds = vec![
             Kind::Reaction,
             Kind::TextNote,
-            Kind::Regular(1311),
+            Kind::LiveEventMessage,
             Kind::WalletConnectResponse,
-            Kind::ParameterizedReplaceable(33194),
+            Kind::from(33194),
         ];
 
         let now = Timestamp::now();
@@ -109,7 +109,7 @@ pub async fn start_listener(
         // filters for NWA
         filters.extend(auth_keys.chunks(250).map(|keys| {
             Filter::new()
-                .kind(Kind::ParameterizedReplaceable(33194))
+                .kind(Kind::from(33194))
                 .identifiers(keys.iter().map(|k| k.to_string()).collect_vec())
         }));
 
@@ -156,7 +156,7 @@ pub async fn start_listener(
                         }
                         RelayPoolNotification::Stop => {}
                         RelayPoolNotification::Message { .. } => {}
-                        RelayPoolNotification::RelayStatus{ .. } => {}}
+                        RelayPoolNotification::RelayStatus { .. } => {}}
                 }
                 _ = pubkey_receiver.changed() => {
                     break;
@@ -168,7 +168,7 @@ pub async fn start_listener(
                     let auth_keys: Vec<String> = auth_receiver.borrow().iter().map(|x| x.to_string()).collect();
 
                     let auth = Filter::new()
-                        .kind(Kind::ParameterizedReplaceable(33194))
+                        .kind(Kind::from(33194))
                         .identifiers(auth_keys);
                     client.subscribe(vec![auth]).await;
                 }
@@ -205,7 +205,7 @@ async fn handle_event(
             )
             .await
         }
-        Kind::Regular(1311) => {
+        Kind::LiveEventMessage => {
             handle_live_chat(
                 db_pool,
                 lnurl_client,

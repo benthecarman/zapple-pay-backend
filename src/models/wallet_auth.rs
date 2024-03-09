@@ -246,6 +246,10 @@ mod test {
         assert_eq!(user_data.0, user_pubkey);
         assert_eq!(user_data.1, None);
 
+        let auth = WalletAuth::get_by_pubkey(conn, pubkey).unwrap().unwrap();
+
+        assert_eq!(auth.user_pubkey(), Some(user_pubkey));
+
         clear_database(conn);
     }
 
@@ -272,6 +276,11 @@ mod test {
             .unwrap();
         assert_eq!(user_data.0, user_pubkey);
         assert_eq!(user_data.1, relay);
+
+        let auth = WalletAuth::get_by_pubkey(conn, pubkey).unwrap().unwrap();
+
+        assert_eq!(auth.user_pubkey(), Some(user_pubkey));
+
         clear_database(conn);
     }
 }

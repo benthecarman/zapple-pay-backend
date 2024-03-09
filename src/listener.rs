@@ -36,6 +36,27 @@ use std::time::Duration;
 use tokio::sync::watch::Receiver;
 use tokio::sync::Mutex;
 
+const KINDS: [Kind; 5] = [
+    Kind::Reaction,
+    Kind::TextNote,
+    Kind::LiveEventMessage,
+    Kind::WalletConnectResponse,
+    Kind::ParameterizedReplaceable(33194),
+];
+
+fn check_event(event: &Event) -> bool {
+    KINDS.contains(&event.kind)
+        && event.tags.iter().any(|tag| {
+            matches!(
+                tag,
+                Tag::PublicKey {
+                    uppercase: false,
+                    ..
+                } | Tag::Identifier(_)
+            )
+        })
+}
+
 pub async fn start_listener(
     mut relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
@@ -77,14 +98,6 @@ pub async fn start_listener(
 
         let auth_keys: Vec<XOnlyPublicKey> = auth_receiver.borrow().clone();
 
-        let kinds = vec![
-            Kind::Reaction,
-            Kind::TextNote,
-            Kind::LiveEventMessage,
-            Kind::WalletConnectResponse,
-            Kind::from(33194),
-        ];
-
         let now = Timestamp::now();
 
         // filters for reactions
@@ -92,7 +105,7 @@ pub async fn start_listener(
             .chunks(250)
             .map(|keys| {
                 Filter::new()
-                    .kinds(kinds.clone())
+                    .kinds(KINDS.to_vec())
                     .authors(keys.to_vec())
                     .since(now)
             })
@@ -123,7 +136,7 @@ pub async fn start_listener(
                 Ok(notification) = notifications.recv() => {
                     match notification {
                         RelayPoolNotification::Event { event, .. } => {
-                            if kinds.contains(&event.kind) && event.tags.iter().any(|tag| matches!(tag, Tag::PublicKey { uppercase: false, .. } | Tag::Identifier(_))) {
+                            if check_event(&event) {
                                 tokio::spawn({
                                     let db_pool = db_pool.clone();
                                     let lnurl_client = lnurl_client.clone();
@@ -633,4 +646,21 @@ async fn pay_user(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use nostr::JsonUtil;
+
+    #[test]
+    fn test_check_event() {
+        let event = nostr::Event::from_json("{\"content\":\"NZEQvjoWGaWiNH7acJ5dnX24yJcPJIW7t1q3nQhVOlG8OWdNvXpf8LU1oi/Nwaq2SDHLVfKozWeO2PqhWZPOmUY66benQqLim0uzsc/6xTwsIPIhStIS+BReRWGGl+0+?iv=6lbXMUOWN3qr1yMn2rlalg==\",\"created_at\":1709993795,\"id\":\"02dceaaffacdafb02baf936a4dc88cb1ee55cbf60285eb956269509300a17a19\",\"kind\":33194,\"pubkey\":\"6068cf95000cdd712c1dff283a6c863a4b12c14f94cc0985347b7a0cda3cebf2\",\"sig\":\"e9dc03abf83e5373f97d43099ba97c231dbf693e0fb180c08cf8116c85482bea4217095035db5cec0b809813c8d8f552ca57ff806c21478158c45316125f1782\",\"tags\":[[\"d\",\"a2a483c521c94f9903dde4192ec7f15861c1b935f894eee215274255cfe9dad7\"]]}").unwrap();
+
+        assert!(event.verify().is_ok());
+        assert!(super::check_event(&event));
+        assert!(matches!(
+            event.kind,
+            nostr::Kind::ParameterizedReplaceable(33194)
+        ));
+    }
 }

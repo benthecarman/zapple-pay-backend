@@ -16,7 +16,7 @@ use lnurl::lnurl::LnUrl;
 use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
 use log::*;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use nostr::prelude::NostrWalletConnectURI;
 use nostr::prelude::ToBech32;
 use nostr::Keys;
@@ -30,7 +30,7 @@ pub async fn start_subscription_handler(
     keys: Keys,
     xpriv: ExtendedPrivKey,
     db_pool: Pool<ConnectionManager<PgConnection>>,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+    lnurl_cache: Arc<Mutex<HashMap<PublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_async()?;
@@ -65,7 +65,7 @@ pub async fn start_subscription_handler(
         let mut to_npubs = subscriptions
             .iter()
             .map(|subscription| subscription.to_npub())
-            .collect::<Vec<XOnlyPublicKey>>();
+            .collect::<Vec<PublicKey>>();
         to_npubs.sort();
         to_npubs.dedup();
 
@@ -176,7 +176,7 @@ pub async fn start_subscription_handler(
                     &to_npub,
                     ConfigType::Subscription,
                     sub.amount,
-                    nwc.secret,
+                    nwc.secret.clone(),
                     sent.payment_hash,
                     sent.event_id,
                 )?;
@@ -215,8 +215,8 @@ pub async fn start_subscription_handler(
 async fn pay_subscription(
     sub: SubscriptionConfig,
     nwc: NostrWalletConnectURI,
-    user_keys: &HashMap<i32, XOnlyPublicKey>,
-    lnurls: &HashMap<XOnlyPublicKey, LnUrlCacheResult>,
+    user_keys: &HashMap<i32, PublicKey>,
+    lnurls: &HashMap<PublicKey, LnUrlCacheResult>,
     pay_cache: &Mutex<HashMap<LnUrl, PayResponse>>,
     lnurl_client: &AsyncClient,
     keys: &Keys,
@@ -290,8 +290,8 @@ async fn sleep_until_next_min(start_second: u32) {
 }
 
 pub async fn populate_lnurl_cache(
-    to_npubs: Vec<XOnlyPublicKey>,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+    to_npubs: Vec<PublicKey>,
+    lnurl_cache: Arc<Mutex<HashMap<PublicKey, LnUrlCacheResult>>>,
 ) -> anyhow::Result<()> {
     let lnurl_client = Builder::default().build_async()?;
 

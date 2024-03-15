@@ -4,13 +4,12 @@ use crate::models::user::NewUser;
 use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::{NewZapConfig, ZapConfig};
 use crate::routes::{CreateUserSubscription, SetUserConfig};
-use bitcoin::key::XOnlyPublicKey;
 use diesel::prelude::*;
 use diesel::result::Error;
 use diesel::upsert::on_constraint;
-use diesel::{PgConnection, QueryDsl, RunQueryDsl};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
 use log::error;
+use nostr::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -54,7 +53,7 @@ impl FromStr for ConfigType {
 }
 
 pub struct UserZapConfig {
-    pub npub: XOnlyPublicKey,
+    pub npub: PublicKey,
     pub zap_config: ZapConfig,
     pub donations: Vec<Donation>,
 }
@@ -191,7 +190,7 @@ pub fn upsert_subscription(
 
 pub fn get_user_zap_config(
     conn: &mut PgConnection,
-    npub: XOnlyPublicKey,
+    npub: PublicKey,
     content: &str,
 ) -> anyhow::Result<Option<UserZapConfig>> {
     // todo could do one query here, currently in two
@@ -213,7 +212,7 @@ pub fn get_user_zap_config(
 
 pub fn get_user_zap_configs(
     conn: &mut PgConnection,
-    npub: XOnlyPublicKey,
+    npub: PublicKey,
 ) -> anyhow::Result<Vec<UserZapConfig>> {
     // todo could do one query here, currently in two
 
@@ -242,7 +241,7 @@ pub fn get_user_zap_configs(
     })
 }
 
-pub fn delete_user(conn: &mut PgConnection, npub: XOnlyPublicKey) -> anyhow::Result<()> {
+pub fn delete_user(conn: &mut PgConnection, npub: PublicKey) -> anyhow::Result<()> {
     conn.transaction(|conn| {
         use schema::{donations, subscription_configs, users, zap_configs};
 
@@ -278,7 +277,7 @@ pub fn delete_user(conn: &mut PgConnection, npub: XOnlyPublicKey) -> anyhow::Res
 
 pub fn delete_user_config(
     conn: &mut PgConnection,
-    npub: XOnlyPublicKey,
+    npub: PublicKey,
     emoji: &str,
 ) -> anyhow::Result<()> {
     conn.transaction(|conn| {
@@ -300,8 +299,8 @@ pub fn delete_user_config(
 
 pub fn delete_user_subscription(
     conn: &mut PgConnection,
-    npub: XOnlyPublicKey,
-    to_npub: XOnlyPublicKey,
+    npub: PublicKey,
+    to_npub: PublicKey,
 ) -> anyhow::Result<()> {
     conn.transaction(|conn| {
         use schema::subscription_configs;
@@ -321,7 +320,7 @@ pub fn delete_user_subscription(
 #[allow(dead_code)]
 pub fn delete_subscribed_user(
     conn: &mut PgConnection,
-    to_npub: XOnlyPublicKey,
+    to_npub: PublicKey,
 ) -> anyhow::Result<usize> {
     conn.transaction(|conn| {
         use schema::subscription_configs;
@@ -381,8 +380,8 @@ mod test {
     fn test_create_subscription() {
         let mut conn = init_db();
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
-        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
         let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
 
@@ -411,8 +410,8 @@ mod test {
     fn test_create_subscription_nwa() {
         let mut conn = init_db();
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
-        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
         let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
 
         // setup wallet auth
@@ -420,7 +419,7 @@ mod test {
         let auth_id = wallet_auth.pubkey();
         let user_data = WalletAuth::get_user_data(&mut conn, wallet_auth.index).unwrap();
         assert_eq!(user_data, None);
-        let user_pubkey = XOnlyPublicKey::from_slice(&[2; 32]).unwrap();
+        let user_pubkey = PublicKey::from_slice(&[2; 32]).unwrap();
         WalletAuth::add_user_data(&mut conn, auth_id, user_pubkey, None).unwrap();
 
         let config = CreateUserSubscription {
@@ -441,7 +440,7 @@ mod test {
         assert_eq!(config.time_period(), SubscriptionPeriod::Day);
         let nwc = config.nwc(xpriv, Some(user_pubkey), None);
         assert_eq!(nwc.public_key, user_pubkey);
-        assert_eq!(nwc.secret.x_only_public_key(&SECP256K1).0, auth_id);
+        assert_eq!(nwc.secret.x_only_public_key(&SECP256K1).0, *auth_id);
 
         clear_database(&mut conn)
     }
@@ -450,8 +449,8 @@ mod test {
     fn test_create_subscription_overwrite_with_nwa() {
         let mut conn = init_db();
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
-        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
         let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
 
@@ -469,7 +468,7 @@ mod test {
         // setup wallet auth
         let wallet_auth = WalletAuth::create(&mut conn, xpriv).unwrap();
         let auth_id = wallet_auth.pubkey();
-        let user_pubkey = XOnlyPublicKey::from_slice(&[2; 32]).unwrap();
+        let user_pubkey = PublicKey::from_slice(&[2; 32]).unwrap();
         let relay = "wss://nostr.mutinywallet.com/".to_string();
         WalletAuth::add_user_data(&mut conn, auth_id, user_pubkey, Some(relay.clone())).unwrap();
 
@@ -491,7 +490,7 @@ mod test {
         assert_eq!(config.time_period(), SubscriptionPeriod::Week);
         let new_nwc = config.nwc(xpriv, Some(user_pubkey), Some(&relay));
         assert_eq!(new_nwc.public_key, user_pubkey);
-        assert_eq!(new_nwc.secret.x_only_public_key(&SECP256K1).0, auth_id);
+        assert_eq!(new_nwc.secret.x_only_public_key(&SECP256K1).0, *auth_id);
         assert_eq!(new_nwc.relay_url.to_string(), relay);
         assert_ne!(new_nwc, nwc);
 

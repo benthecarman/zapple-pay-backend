@@ -1,6 +1,5 @@
 use crate::LnUrlCacheResult;
 use anyhow::anyhow;
-use bitcoin::key::XOnlyPublicKey;
 use bitcoin::secp256k1::ThirtyTwoByteHash;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
@@ -12,7 +11,9 @@ use log::*;
 use nostr::nips::nip04::encrypt;
 use nostr::nips::nip47::{Method, NostrWalletConnectURI, Request, RequestParams};
 use nostr::prelude::{PayInvoiceRequestParams, ToBech32};
-use nostr::{Event, EventBuilder, EventId, JsonUtil, Keys, Kind, Metadata, Tag, Timestamp, Url};
+use nostr::{
+    Event, EventBuilder, EventId, JsonUtil, Keys, Kind, Metadata, PublicKey, Tag, Timestamp, Url,
+};
 use nostr_sdk::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -26,8 +27,8 @@ pub struct SentInvoice {
 }
 
 pub async fn get_user_lnurl(
-    user_key: XOnlyPublicKey,
-    lnurl_cache: &Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>,
+    user_key: PublicKey,
+    lnurl_cache: &Mutex<HashMap<PublicKey, LnUrlCacheResult>>,
     lnurl_client: &AsyncClient,
 ) -> anyhow::Result<(LnUrl, Option<LnUrl>)> {
     let (cache_result, _timestamp) = {
@@ -118,8 +119,8 @@ pub async fn get_user_lnurl(
 
 async fn get_invoice_from_lnurl(
     keys: &Keys,
-    from_user: XOnlyPublicKey,
-    to_user: Option<XOnlyPublicKey>,
+    from_user: PublicKey,
+    to_user: Option<PublicKey>,
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     lnurl: &LnUrl,
@@ -240,8 +241,8 @@ async fn get_invoice_from_lnurl(
 
 pub async fn pay_to_lnurl(
     keys: &Keys,
-    from_user: XOnlyPublicKey,
-    to_user: Option<XOnlyPublicKey>,
+    from_user: PublicKey,
+    to_user: Option<PublicKey>,
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     lnurl: (LnUrl, Option<LnUrl>),
@@ -326,20 +327,24 @@ pub async fn pay_to_lnurl(
 fn create_nwc_request(nwc: &NostrWalletConnectURI, invoice: String) -> Event {
     let req = Request {
         method: Method::PayInvoice,
-        params: RequestParams::PayInvoice(PayInvoiceRequestParams { invoice }),
+        params: RequestParams::PayInvoice(PayInvoiceRequestParams {
+            id: None,
+            invoice,
+            amount: None,
+        }),
     };
 
     let encrypted = encrypt(&nwc.secret, &nwc.public_key, req.as_json()).unwrap();
     let p_tag = Tag::public_key(nwc.public_key);
 
     EventBuilder::new(Kind::WalletConnectRequest, encrypted, [p_tag])
-        .to_event(&Keys::new(nwc.secret))
+        .to_event(&Keys::new(nwc.secret.clone()))
         .unwrap()
 }
 
 async fn get_nostr_profile(
     lnurl_client: &AsyncClient,
-    pubkey: XOnlyPublicKey,
+    pubkey: PublicKey,
 ) -> anyhow::Result<Metadata> {
     let body = json!(["user_profile", { "pubkey": pubkey.to_string() } ]);
     let data: Vec<Value> = lnurl_client

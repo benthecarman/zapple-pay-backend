@@ -1,6 +1,6 @@
 use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
 use diesel::prelude::*;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use nostr::SECP256K1;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -42,14 +42,14 @@ struct NextId {
 }
 
 impl WalletAuth {
-    pub fn pubkey(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from_str(&self.pubkey).expect("invalid pubkey")
+    pub fn pubkey(&self) -> PublicKey {
+        PublicKey::from_str(&self.pubkey).expect("invalid pubkey")
     }
 
-    pub fn user_pubkey(&self) -> Option<XOnlyPublicKey> {
+    pub fn user_pubkey(&self) -> Option<PublicKey> {
         self.user_pubkey
             .as_deref()
-            .map(|s| XOnlyPublicKey::from_str(s).expect("invalid user_pubkey"))
+            .map(|s| PublicKey::from_str(s).expect("invalid user_pubkey"))
     }
 
     pub fn create(conn: &mut PgConnection, xpriv: ExtendedPrivKey) -> anyhow::Result<Self> {
@@ -84,8 +84,8 @@ impl WalletAuth {
 
     pub fn add_user_data(
         conn: &mut PgConnection,
-        pubkey: XOnlyPublicKey,
-        user_pubkey: XOnlyPublicKey,
+        pubkey: PublicKey,
+        user_pubkey: PublicKey,
         relay: Option<String>,
     ) -> anyhow::Result<()> {
         diesel::update(wallet_auth::table)
@@ -104,7 +104,7 @@ impl WalletAuth {
     /// hasn't been claimed yet
     pub fn get_index_by_pubkey(
         conn: &mut PgConnection,
-        pubkey: XOnlyPublicKey,
+        pubkey: PublicKey,
     ) -> Result<Option<i32>, diesel::result::Error> {
         let id = wallet_auth::table
             .select(wallet_auth::index)
@@ -118,7 +118,7 @@ impl WalletAuth {
 
     pub fn get_by_pubkey(
         conn: &mut PgConnection,
-        pubkey: XOnlyPublicKey,
+        pubkey: PublicKey,
     ) -> Result<Option<WalletAuth>, diesel::result::Error> {
         let id = wallet_auth::table
             .select(wallet_auth::all_columns)
@@ -132,7 +132,7 @@ impl WalletAuth {
     pub fn get_user_data(
         conn: &mut PgConnection,
         index: i32,
-    ) -> anyhow::Result<Option<(XOnlyPublicKey, Option<String>)>> {
+    ) -> anyhow::Result<Option<(PublicKey, Option<String>)>> {
         let (user_pubkey, relay) = wallet_auth::table
             .select((wallet_auth::user_pubkey, wallet_auth::relay))
             .filter(wallet_auth::index.eq(index))
@@ -140,13 +140,13 @@ impl WalletAuth {
 
         Ok(user_pubkey.map(|pubkey| {
             (
-                XOnlyPublicKey::from_str(&pubkey).expect("invalid user_pubkey"),
+                PublicKey::from_str(&pubkey).expect("invalid user_pubkey"),
                 relay,
             )
         }))
     }
 
-    pub fn get_unlinked(conn: &mut PgConnection) -> anyhow::Result<Vec<XOnlyPublicKey>> {
+    pub fn get_unlinked(conn: &mut PgConnection) -> anyhow::Result<Vec<PublicKey>> {
         let unlinked = wallet_auth::table
             .select(wallet_auth::pubkey)
             .filter(wallet_auth::user_pubkey.is_null())
@@ -158,13 +158,13 @@ impl WalletAuth {
 
         let unlinked = unlinked
             .into_iter()
-            .filter_map(|s| XOnlyPublicKey::from_str(&s).ok())
+            .filter_map(|s| PublicKey::from_str(&s).ok())
             .collect();
 
         Ok(unlinked)
     }
 
-    pub fn get_pubkeys(conn: &mut PgConnection) -> anyhow::Result<Vec<XOnlyPublicKey>> {
+    pub fn get_pubkeys(conn: &mut PgConnection) -> anyhow::Result<Vec<PublicKey>> {
         let pubkeys = wallet_auth::table
             .select(wallet_auth::pubkey)
             .filter(wallet_auth::user_pubkey.is_not_null())
@@ -172,7 +172,7 @@ impl WalletAuth {
 
         let pubkeys = pubkeys
             .into_iter()
-            .filter_map(|s| XOnlyPublicKey::from_str(&s).ok())
+            .filter_map(|s| PublicKey::from_str(&s).ok())
             .collect();
 
         Ok(pubkeys)
@@ -187,7 +187,7 @@ mod test {
     use diesel::r2d2::{ConnectionManager, Pool};
     use diesel::{Connection, PgConnection, RunQueryDsl};
     use diesel_migrations::MigrationHarness;
-    use nostr::key::XOnlyPublicKey;
+    use nostr::key::PublicKey;
     use std::str::FromStr;
 
     const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
@@ -237,7 +237,7 @@ mod test {
         let user_data = WalletAuth::get_user_data(conn, wallet_auth.index).unwrap();
         assert_eq!(user_data, None);
 
-        let user_pubkey = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let user_pubkey = PublicKey::from_str(PUBKEY).unwrap();
         WalletAuth::add_user_data(conn, pubkey, user_pubkey, None).unwrap();
 
         let user_data = WalletAuth::get_user_data(conn, wallet_auth.index)
@@ -267,7 +267,7 @@ mod test {
         let user_data = WalletAuth::get_user_data(conn, wallet_auth.index).unwrap();
         assert_eq!(user_data, None);
 
-        let user_pubkey = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let user_pubkey = PublicKey::from_str(PUBKEY).unwrap();
         let relay = Some("wss://nostr.mutinywallet.com/".to_string());
         WalletAuth::add_user_data(conn, pubkey, user_pubkey, relay.clone()).unwrap();
 

@@ -1,5 +1,5 @@
 use diesel::prelude::*;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -32,8 +32,8 @@ pub struct NewUser<'a> {
 }
 
 impl User {
-    pub fn pubkey(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from_str(&self.npub).expect("invalid pubkey")
+    pub fn pubkey(&self) -> PublicKey {
+        PublicKey::from_str(&self.npub).expect("invalid pubkey")
     }
 
     pub fn get_user_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
@@ -41,12 +41,12 @@ impl User {
         Ok(count)
     }
 
-    pub fn get_all_npubs(conn: &mut PgConnection) -> anyhow::Result<Vec<XOnlyPublicKey>> {
+    pub fn get_all_npubs(conn: &mut PgConnection) -> anyhow::Result<Vec<PublicKey>> {
         let npubs = users::table
             .select(users::npub)
             .load::<String>(conn)?
             .into_iter()
-            .map(|npub| XOnlyPublicKey::from_str(&npub).expect("invalid pubkey"))
+            .map(|npub| PublicKey::from_str(&npub).expect("invalid pubkey"))
             .collect::<Vec<_>>();
 
         Ok(npubs)
@@ -55,7 +55,7 @@ impl User {
     pub fn get_by_user_ids(
         conn: &mut PgConnection,
         user_ids: Vec<i32>,
-    ) -> anyhow::Result<HashMap<i32, XOnlyPublicKey>> {
+    ) -> anyhow::Result<HashMap<i32, PublicKey>> {
         let npubs = users::table
             .filter(users::id.eq_any(user_ids))
             .load::<Self>(conn)?
@@ -63,7 +63,7 @@ impl User {
             .map(|user| {
                 (
                     user.id,
-                    XOnlyPublicKey::from_str(&user.npub).expect("invalid pubkey"),
+                    PublicKey::from_str(&user.npub).expect("invalid pubkey"),
                 )
             })
             .collect();
@@ -73,7 +73,7 @@ impl User {
 
     pub fn get_by_pubkey(
         conn: &mut PgConnection,
-        pubkey: &XOnlyPublicKey,
+        pubkey: &PublicKey,
     ) -> anyhow::Result<Option<Self>> {
         Ok(users::table
             .filter(users::npub.eq(pubkey.to_string()))

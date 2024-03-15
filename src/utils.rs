@@ -1,7 +1,7 @@
 use bitcoin::bip32::ExtendedPrivKey;
 use bitcoin::hashes::{sha256, Hash};
 use lazy_static::lazy_static;
-use nostr::key::XOnlyPublicKey;
+use nostr::PublicKey;
 use regex::Regex;
 
 lazy_static! {
@@ -24,7 +24,7 @@ pub fn map_emoji(emoji: &str) -> Option<&str> {
 }
 
 /// Calculate the NWA secret from the xpriv and the public key
-pub(crate) fn calculate_nwa_secret(xpriv: ExtendedPrivKey, public_key: XOnlyPublicKey) -> String {
+pub(crate) fn calculate_nwa_secret(xpriv: ExtendedPrivKey, public_key: PublicKey) -> String {
     let mut bytes = xpriv.private_key.secret_bytes().to_vec();
     bytes.extend_from_slice(&public_key.serialize());
 

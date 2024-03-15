@@ -13,7 +13,7 @@ use diesel::{Connection, PgConnection};
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use log::*;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use nostr::nips::nip47::NostrWalletConnectURI;
 use nostr::prelude::Method;
 #[cfg(not(test))]
@@ -49,12 +49,12 @@ pub struct UserConfigs {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SetUserConfig {
-    pub npub: XOnlyPublicKey,
+    pub npub: PublicKey,
     pub amount_sats: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nwc: Option<NostrWalletConnectURI>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_id: Option<XOnlyPublicKey>,
+    pub auth_id: Option<PublicKey>,
     pub emoji: Option<String>,
     pub donations: Option<Vec<DonationConfig>>,
 }
@@ -93,7 +93,7 @@ impl SetUserConfig {
 pub struct DonationConfig {
     pub amount_sats: u64,
     pub lnurl: Option<String>,
-    pub npub: Option<XOnlyPublicKey>,
+    pub npub: Option<PublicKey>,
 }
 
 impl DonationConfig {
@@ -110,14 +110,14 @@ impl DonationConfig {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateUserSubscription {
-    pub npub: XOnlyPublicKey,
-    pub to_npub: XOnlyPublicKey,
+    pub npub: PublicKey,
+    pub to_npub: PublicKey,
     pub amount_sats: u64,
     pub time_period: SubscriptionPeriod,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nwc: Option<NostrWalletConnectURI>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_id: Option<XOnlyPublicKey>,
+    pub auth_id: Option<PublicKey>,
 }
 
 impl CreateUserSubscription {
@@ -141,7 +141,7 @@ impl CreateUserSubscription {
 #[cfg(not(test))]
 async fn send_config_dm(
     keys: Keys,
-    npub: XOnlyPublicKey,
+    npub: PublicKey,
     emoji: String,
     amt: u64,
 ) -> anyhow::Result<()> {
@@ -162,8 +162,8 @@ async fn send_config_dm(
 #[cfg(not(test))]
 async fn send_subscription_dm(
     keys: Keys,
-    npub: XOnlyPublicKey,
-    to_npub: XOnlyPublicKey,
+    npub: PublicKey,
+    to_npub: PublicKey,
     period: SubscriptionPeriod,
     amt: u64,
 ) -> anyhow::Result<()> {
@@ -185,11 +185,7 @@ async fn send_subscription_dm(
 }
 
 #[cfg(not(test))]
-async fn send_deleted_config_dm(
-    keys: Keys,
-    npub: XOnlyPublicKey,
-    emoji: String,
-) -> anyhow::Result<()> {
+async fn send_deleted_config_dm(keys: Keys, npub: PublicKey, emoji: String) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
     client.add_relay("wss://nostr.mutinywallet.com").await?;
     client.connect().await;
@@ -207,8 +203,8 @@ async fn send_deleted_config_dm(
 #[cfg(not(test))]
 async fn send_deleted_subscription_dm(
     keys: Keys,
-    npub: XOnlyPublicKey,
-    to_npub: XOnlyPublicKey,
+    npub: PublicKey,
+    to_npub: PublicKey,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
     client.add_relay("wss://nostr.mutinywallet.com").await?;
@@ -227,7 +223,7 @@ async fn send_deleted_subscription_dm(
 }
 
 #[cfg(not(test))]
-async fn send_deleted_user_dm(keys: Keys, npub: XOnlyPublicKey) -> anyhow::Result<()> {
+async fn send_deleted_user_dm(keys: Keys, npub: PublicKey) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
     client.add_relay("wss://nostr.mutinywallet.com").await?;
     client.connect().await;
@@ -255,8 +251,8 @@ pub(crate) async fn set_user_config_impl(
 
     let npub = payload.npub;
     let amt = payload.amount_sats;
-    let secret_key_pk = match payload.nwc.as_ref() {
-        Some(nwc) => nwc.secret.x_only_public_key(&SECP256K1).0,
+    let secret_key_pk: PublicKey = match payload.nwc.as_ref() {
+        Some(nwc) => nwc.secret.x_only_public_key(&SECP256K1).0.into(),
         None => payload.auth_id.unwrap(),
     };
     let mut conn = state.db_pool.get()?;
@@ -315,8 +311,8 @@ pub(crate) async fn create_user_subscription_impl(
     let to_npub = payload.to_npub;
     let amt = payload.amount_sats;
     let period = payload.time_period;
-    let secret_key_pk = match payload.nwc.as_ref() {
-        Some(nwc) => nwc.secret.x_only_public_key(&SECP256K1).0,
+    let secret_key_pk: PublicKey = match payload.nwc.as_ref() {
+        Some(nwc) => nwc.secret.x_only_public_key(&SECP256K1).0.into(),
         None => payload.auth_id.unwrap(),
     };
     let mut conn = state.db_pool.get()?;
@@ -356,7 +352,7 @@ pub async fn create_user_subscription(
 }
 
 pub(crate) fn get_user_config_impl(
-    npub: XOnlyPublicKey,
+    npub: PublicKey,
     emoji: String,
     state: &State,
 ) -> anyhow::Result<Option<SetUserConfig>> {
@@ -395,7 +391,7 @@ pub async fn get_user_config(
     Path((npub, emoji)): Path<(String, String)>,
     Extension(state): Extension<State>,
 ) -> Result<Json<SetUserConfig>, (StatusCode, String)> {
-    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+    let npub = PublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
@@ -408,10 +404,7 @@ pub async fn get_user_config(
     }
 }
 
-pub(crate) fn get_user_configs_impl(
-    npub: XOnlyPublicKey,
-    state: &State,
-) -> anyhow::Result<UserConfigs> {
+pub(crate) fn get_user_configs_impl(npub: PublicKey, state: &State) -> anyhow::Result<UserConfigs> {
     let mut conn = state.db_pool.get()?;
     let zaps = crate::models::get_user_zap_configs(&mut conn, npub).map(|configs| {
         configs
@@ -467,7 +460,7 @@ pub async fn get_user_configs(
     Path(npub): Path<String>,
     Extension(state): Extension<State>,
 ) -> Result<Json<UserConfigs>, (StatusCode, String)> {
-    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+    let npub = PublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
@@ -481,7 +474,7 @@ pub async fn get_user_configs(
 
 pub(crate) fn get_user_subscriptions_impl(
     conn: &mut PgConnection,
-    npub: XOnlyPublicKey,
+    npub: PublicKey,
 ) -> anyhow::Result<Vec<CreateUserSubscription>> {
     let configs = SubscriptionConfig::get_by_pubkey(conn, &npub)?;
     let res = configs
@@ -503,7 +496,7 @@ pub async fn get_user_subscriptions(
     Path(npub): Path<String>,
     Extension(state): Extension<State>,
 ) -> Result<Json<Vec<CreateUserSubscription>>, (StatusCode, String)> {
-    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+    let npub = PublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
@@ -523,8 +516,8 @@ pub async fn get_user_subscriptions(
 
 pub(crate) fn get_user_subscription_impl(
     conn: &mut PgConnection,
-    npub: XOnlyPublicKey,
-    to_npub: XOnlyPublicKey,
+    npub: PublicKey,
+    to_npub: PublicKey,
 ) -> anyhow::Result<Option<CreateUserSubscription>> {
     let c = SubscriptionConfig::get_by_pubkey_and_to_npub(conn, &npub, &to_npub)?;
 
@@ -542,13 +535,13 @@ pub async fn get_user_subscription(
     Path((npub, to_npub)): Path<(String, String)>,
     Extension(state): Extension<State>,
 ) -> Result<Json<CreateUserSubscription>, (StatusCode, String)> {
-    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+    let npub = PublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
         )
     })?;
-    let to_npub = XOnlyPublicKey::from_str(&to_npub).map_err(|_| {
+    let to_npub = PublicKey::from_str(&to_npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid to_npub\"}"),
@@ -575,7 +568,7 @@ pub async fn delete_user_config(
     Path((npub, emoji)): Path<(String, String)>,
     Extension(state): Extension<State>,
 ) -> Result<Json<UserConfigs>, (StatusCode, String)> {
-    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+    let npub = PublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
@@ -609,7 +602,7 @@ pub async fn delete_user_configs(
     Path(npub): Path<String>,
     Extension(state): Extension<State>,
 ) -> Result<Json<UserConfigs>, (StatusCode, String)> {
-    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+    let npub = PublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
@@ -643,13 +636,13 @@ pub async fn delete_user_subscription(
     Path((npub, to_npub)): Path<(String, String)>,
     Extension(state): Extension<State>,
 ) -> Result<Json<UserConfigs>, (StatusCode, String)> {
-    let npub = XOnlyPublicKey::from_str(&npub).map_err(|_| {
+    let npub = PublicKey::from_str(&npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid npub\"}"),
         )
     })?;
-    let to_npub = XOnlyPublicKey::from_str(&to_npub).map_err(|_| {
+    let to_npub = PublicKey::from_str(&to_npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid to_npub\"}"),
@@ -684,7 +677,7 @@ pub async fn delete_subscribed_user(
     Path(to_npub): Path<String>,
     Extension(state): Extension<State>,
 ) -> Result<Json<usize>, (StatusCode, String)> {
-    let to_npub = XOnlyPublicKey::from_str(&to_npub).map_err(|_| {
+    let to_npub = PublicKey::from_str(&to_npub).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             String::from("{\"status\":\"ERROR\",\"reason\":\"Invalid to_npub\"}"),
@@ -708,7 +701,7 @@ pub async fn delete_subscribed_user(
 pub struct WalletAuthParams {
     pub time_period: SubscriptionPeriod,
     pub amount: u64,
-    pub identity: Option<XOnlyPublicKey>,
+    pub identity: Option<PublicKey>,
 }
 
 pub async fn wallet_auth_impl(
@@ -766,10 +759,10 @@ pub async fn wallet_auth(
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct CheckWalletAuthPayload {
-    id: XOnlyPublicKey,
+    id: PublicKey,
 }
 
-pub async fn check_wallet_auth_impl(state: &State, id: XOnlyPublicKey) -> anyhow::Result<bool> {
+pub async fn check_wallet_auth_impl(state: &State, id: PublicKey) -> anyhow::Result<bool> {
     let mut conn = state.db_pool.get()?;
     let auth = WalletAuth::get_by_pubkey(&mut conn, id)?;
 
@@ -867,10 +860,9 @@ pub async fn migrate_emojis(
 mod test {
     use crate::models::MIGRATIONS;
     use crate::routes::*;
-    use crate::State;
     use bitcoin::bip32::ExtendedPrivKey;
     use diesel::r2d2::{ConnectionManager, Pool};
-    use diesel::{PgConnection, RunQueryDsl};
+    use diesel::RunQueryDsl;
     use diesel_migrations::MigrationHarness;
     use std::sync::Arc;
     use tokio::sync::{watch, Mutex};
@@ -933,7 +925,7 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 
         let payload = SetUserConfig {
@@ -965,7 +957,7 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
 
         let uri = wallet_auth_impl(&state, None).await.unwrap();
 
@@ -998,7 +990,7 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
 
         // set using nwc first
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
@@ -1044,7 +1036,7 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 
         let emojis = ["⚡️", "🤙", "👍", "❤️", "🫂"];
@@ -1070,8 +1062,8 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
-        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
 
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 
@@ -1106,8 +1098,8 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
-        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
 
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 
@@ -1162,7 +1154,7 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
         let emoji = "⚡";
 
@@ -1201,8 +1193,8 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
-        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
 
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 
@@ -1242,8 +1234,8 @@ mod test {
         let state = init_state();
         clear_database(&state);
 
-        let npub = XOnlyPublicKey::from_str(PUBKEY).unwrap();
-        let to_npub = XOnlyPublicKey::from_str(PUBKEY2).unwrap();
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
 
         let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
 

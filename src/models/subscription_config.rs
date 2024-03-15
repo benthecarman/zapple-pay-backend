@@ -2,7 +2,7 @@ use crate::nip49::{SubscriptionPeriod, ALL_SUBSCRIPTION_PERIODS};
 use crate::DEFAULT_AUTH_RELAY;
 use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
 use diesel::prelude::*;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use nostr::prelude::{NostrWalletConnectURI, SecretKey};
 use nostr::{Url, SECP256K1};
 use serde::{Deserialize, Serialize};
@@ -53,8 +53,8 @@ pub struct NewSubscriptionConfig<'a> {
 }
 
 impl SubscriptionConfig {
-    pub fn to_npub(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from_str(&self.to_npub).expect("invalid to_npub")
+    pub fn to_npub(&self) -> PublicKey {
+        PublicKey::from_str(&self.to_npub).expect("invalid to_npub")
     }
 
     pub fn time_period(&self) -> SubscriptionPeriod {
@@ -64,7 +64,7 @@ impl SubscriptionConfig {
     pub fn nwc(
         &self,
         xpriv: ExtendedPrivKey,
-        user_public_key: Option<XOnlyPublicKey>,
+        user_public_key: Option<PublicKey>,
         relay: Option<&str>,
     ) -> NostrWalletConnectURI {
         match (self.nwc.as_deref(), self.auth_index) {
@@ -81,10 +81,9 @@ impl SubscriptionConfig {
                 NostrWalletConnectURI::new(
                     user_public_key.expect("Missing user public key from database"),
                     Url::parse(relay.unwrap_or(DEFAULT_AUTH_RELAY)).unwrap(),
-                    secret,
+                    secret.into(),
                     None,
                 )
-                .unwrap()
             }
             _ => panic!("Invalid SubscriptionConfig"),
         }
@@ -138,10 +137,7 @@ impl SubscriptionConfig {
         Ok(secrets)
     }
 
-    pub fn get_by_pubkey(
-        conn: &mut PgConnection,
-        pubkey: &XOnlyPublicKey,
-    ) -> anyhow::Result<Vec<Self>> {
+    pub fn get_by_pubkey(conn: &mut PgConnection, pubkey: &PublicKey) -> anyhow::Result<Vec<Self>> {
         let configs = subscription_configs::table
             .inner_join(users::table)
             .filter(users::npub.eq(pubkey.to_string()))
@@ -153,7 +149,7 @@ impl SubscriptionConfig {
 
     pub fn get_by_to_npub(
         conn: &mut PgConnection,
-        to_npub: &XOnlyPublicKey,
+        to_npub: &PublicKey,
     ) -> anyhow::Result<Vec<Self>> {
         let configs = subscription_configs::table
             .filter(subscription_configs::to_npub.eq(to_npub.to_string()))
@@ -165,8 +161,8 @@ impl SubscriptionConfig {
 
     pub fn get_by_pubkey_and_to_npub(
         conn: &mut PgConnection,
-        pubkey: &XOnlyPublicKey,
-        to_npub: &XOnlyPublicKey,
+        pubkey: &PublicKey,
+        to_npub: &PublicKey,
     ) -> anyhow::Result<Option<Self>> {
         Ok(subscription_configs::table
             .filter(subscription_configs::to_npub.eq(to_npub.to_string()))
@@ -204,14 +200,14 @@ impl SubscriptionConfig {
         })
     }
 
-    pub fn get_to_npubs(conn: &mut PgConnection) -> anyhow::Result<Vec<XOnlyPublicKey>> {
+    pub fn get_to_npubs(conn: &mut PgConnection) -> anyhow::Result<Vec<PublicKey>> {
         let strings = subscription_configs::table
             .select(subscription_configs::to_npub)
             .load::<String>(conn)?;
 
         Ok(strings
             .into_iter()
-            .filter_map(|s| XOnlyPublicKey::from_str(&s).ok())
+            .filter_map(|s| PublicKey::from_str(&s).ok())
             .collect())
     }
 

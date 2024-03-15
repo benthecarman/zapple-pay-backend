@@ -2,11 +2,10 @@ use crate::models::schema::zap_configs::dsl;
 use crate::utils::map_emoji;
 use crate::DEFAULT_AUTH_RELAY;
 use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
-use bitcoin::key::XOnlyPublicKey;
 use diesel::prelude::*;
 use nostr::prelude::NostrWalletConnectURI;
-use nostr::secp256k1::SecretKey;
-use nostr::{Url, SECP256K1};
+use nostr::SecretKey;
+use nostr::{PublicKey, Url, SECP256K1};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -54,7 +53,7 @@ impl ZapConfig {
     pub fn nwc(
         &self,
         xpriv: ExtendedPrivKey,
-        user_public_key: Option<XOnlyPublicKey>,
+        user_public_key: Option<PublicKey>,
         relay: Option<&str>,
     ) -> NostrWalletConnectURI {
         match (self.nwc.as_deref(), self.auth_index) {
@@ -71,10 +70,9 @@ impl ZapConfig {
                 NostrWalletConnectURI::new(
                     user_public_key.expect("Missing user public key from database"),
                     Url::parse(relay.unwrap_or(DEFAULT_AUTH_RELAY)).unwrap(),
-                    secret,
+                    secret.into(),
                     None,
                 )
-                .unwrap()
             }
             _ => panic!("Invalid ZapConfig"),
         }
@@ -130,10 +128,7 @@ impl ZapConfig {
         Ok(counts)
     }
 
-    pub fn get_by_pubkey(
-        conn: &mut PgConnection,
-        pubkey: &XOnlyPublicKey,
-    ) -> anyhow::Result<Vec<Self>> {
+    pub fn get_by_pubkey(conn: &mut PgConnection, pubkey: &PublicKey) -> anyhow::Result<Vec<Self>> {
         let configs = zap_configs::table
             .inner_join(users::table)
             .filter(users::npub.eq(pubkey.to_string()))
@@ -145,7 +140,7 @@ impl ZapConfig {
 
     pub fn get_by_pubkey_and_emoji(
         conn: &mut PgConnection,
-        pubkey: &XOnlyPublicKey,
+        pubkey: &PublicKey,
         emoji: &str,
     ) -> anyhow::Result<Option<Self>> {
         let table = zap_configs::table

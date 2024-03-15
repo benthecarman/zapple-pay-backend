@@ -1,9 +1,9 @@
 use chrono::{Datelike, Duration, NaiveDateTime, Timelike, Utc};
 use core::fmt;
 use itertools::Itertools;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use nostr::nips::nip47::{Error, Method};
-use nostr::prelude::form_urlencoded::byte_serialize;
+use nostr::prelude::url::form_urlencoded::byte_serialize;
 use nostr::Url;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -159,7 +159,7 @@ impl FromStr for NIP49Budget {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NIP49URI {
     /// App Pubkey
-    pub public_key: XOnlyPublicKey,
+    pub public_key: PublicKey,
     /// URL of the relay of choice where the `App` is connected and the `Signer` must send and listen for messages.
     pub relay_url: Url,
     /// A random identifier that the wallet will use to identify the connection.
@@ -171,30 +171,7 @@ pub struct NIP49URI {
     /// Budget
     pub budget: Option<NIP49Budget>,
     /// App's pubkey for identity verification
-    pub identity: Option<XOnlyPublicKey>,
-}
-
-fn method_from_str(s: &str) -> Result<Method, Error> {
-    match s {
-        "pay_invoice" => Ok(Method::PayInvoice),
-        "make_invoice" => Ok(Method::MakeInvoice),
-        "lookup_invoice" => Ok(Method::LookupInvoice),
-        "get_balance" => Ok(Method::GetBalance),
-        _ => Err(Error::InvalidURI),
-    }
-}
-
-fn method_to_string(method: &Method) -> String {
-    match method {
-        Method::PayInvoice => "pay_invoice",
-        Method::MakeInvoice => "make_invoice",
-        Method::LookupInvoice => "lookup_invoice",
-        Method::GetBalance => "get_balance",
-        Method::PayKeysend => "pay_keysend",
-        Method::ListInvoices => "list_invoices",
-        Method::ListPayments => "list_payments",
-    }
-    .to_string()
+    pub identity: Option<PublicKey>,
 }
 
 impl FromStr for NIP49URI {
@@ -207,14 +184,14 @@ impl FromStr for NIP49URI {
         }
 
         if let Some(pubkey) = url.domain() {
-            let public_key = XOnlyPublicKey::from_str(pubkey)?;
+            let public_key = PublicKey::from_str(pubkey)?;
 
             let mut relay_url: Option<Url> = None;
             let mut required_commands: Vec<Method> = vec![];
             let mut optional_commands: Vec<Method> = vec![];
             let mut budget: Option<NIP49Budget> = None;
             let mut secret: Option<String> = None;
-            let mut identity: Option<XOnlyPublicKey> = None;
+            let mut identity: Option<PublicKey> = None;
 
             for (key, value) in url.query_pairs() {
                 match key {
@@ -227,20 +204,20 @@ impl FromStr for NIP49URI {
                     Cow::Borrowed("required_commands") => {
                         required_commands = value
                             .split(' ')
-                            .map(method_from_str)
-                            .collect::<Result<Vec<Method>, Error>>()?;
+                            .map(Method::from_str)
+                            .collect::<Result<Vec<Method>, _>>()?;
                     }
                     Cow::Borrowed("optional_commands") => {
                         optional_commands = value
                             .split(' ')
-                            .map(method_from_str)
-                            .collect::<Result<Vec<Method>, Error>>()?;
+                            .map(Method::from_str)
+                            .collect::<Result<Vec<Method>, _>>()?;
                     }
                     Cow::Borrowed("budget") => {
                         budget = Some(NIP49Budget::from_str(value.as_ref())?);
                     }
                     Cow::Borrowed("identity") => {
-                        identity = Some(XOnlyPublicKey::from_str(value.as_ref())?);
+                        identity = Some(PublicKey::from_str(value.as_ref())?);
                     }
                     _ => (),
                 }
@@ -278,7 +255,7 @@ impl fmt::Display for NIP49URI {
             url_encode(
                 self.required_commands
                     .iter()
-                    .map(method_to_string)
+                    .map(|x| x.to_string())
                     .join(" ")
             ),
         )?;
@@ -289,7 +266,7 @@ impl fmt::Display for NIP49URI {
                 url_encode(
                     self.optional_commands
                         .iter()
-                        .map(method_to_string)
+                        .map(|x| x.to_string())
                         .join(" ")
                 )
             )?;

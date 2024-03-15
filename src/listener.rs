@@ -21,11 +21,14 @@ use lnurl::pay::PayResponse;
 use lnurl::{AsyncClient, Builder};
 use log::*;
 use nostr::hashes::sha256;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use nostr::nips::nip04::decrypt;
 use nostr::nips::nip47::{Method, NIP47Error, Response, ResponseResult};
 use nostr::prelude::ErrorCode;
-use nostr::{Event, EventId, Filter, Keys, Kind, Tag, TagKind, Timestamp, SECP256K1};
+use nostr::{
+    Alphabet, Event, EventId, Filter, Keys, Kind, SingleLetterTag, Tag, TagKind, Timestamp,
+    SECP256K1,
+};
 use nostr_sdk::{Client, RelayPoolNotification};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -60,12 +63,12 @@ fn check_event(event: &Event) -> bool {
 pub async fn start_listener(
     mut relays: Vec<String>,
     db_pool: Pool<ConnectionManager<PgConnection>>,
-    mut pubkey_receiver: Receiver<Vec<XOnlyPublicKey>>,
-    mut secret_receiver: Receiver<Vec<XOnlyPublicKey>>,
-    mut auth_receiver: Receiver<Vec<XOnlyPublicKey>>,
+    mut pubkey_receiver: Receiver<Vec<PublicKey>>,
+    mut secret_receiver: Receiver<Vec<PublicKey>>,
+    mut auth_receiver: Receiver<Vec<PublicKey>>,
     keys: Keys,
     xpriv: ExtendedPrivKey,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+    lnurl_cache: Arc<Mutex<HashMap<PublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     debug!("Using relays: {:?}", relays);
@@ -93,10 +96,10 @@ pub async fn start_listener(
         }
         client.connect().await;
 
-        let tagged: Vec<XOnlyPublicKey> = secret_receiver.borrow().clone();
-        let authors: Vec<XOnlyPublicKey> = pubkey_receiver.borrow().clone();
+        let tagged: Vec<PublicKey> = secret_receiver.borrow().clone();
+        let authors: Vec<PublicKey> = pubkey_receiver.borrow().clone();
 
-        let auth_keys: Vec<XOnlyPublicKey> = auth_receiver.borrow().clone();
+        let auth_keys: Vec<PublicKey> = auth_receiver.borrow().clone();
 
         let now = Timestamp::now();
 
@@ -126,7 +129,7 @@ pub async fn start_listener(
                 .identifiers(keys.iter().map(|k| k.to_string()).collect_vec())
         }));
 
-        client.subscribe(filters).await;
+        client.subscribe(filters, None).await;
 
         info!("Listening for events...");
 
@@ -147,7 +150,7 @@ pub async fn start_listener(
                                         let fut = handle_event(
                                             &db_pool,
                                             &lnurl_client,
-                                            event,
+                                            *event,
                                             &keys,
                                             xpriv,
                                             lnurl_cache.clone(),
@@ -183,7 +186,7 @@ pub async fn start_listener(
                     let auth = Filter::new()
                         .kind(Kind::from(33194))
                         .identifiers(auth_keys);
-                    client.subscribe(vec![auth]).await;
+                    client.subscribe(vec![auth], None).await;
                 }
             }
         }
@@ -198,7 +201,7 @@ async fn handle_event(
     event: Event,
     keys: &Keys,
     xpriv: ExtendedPrivKey,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+    lnurl_cache: Arc<Mutex<HashMap<PublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     event.verify()?;
@@ -271,7 +274,7 @@ async fn handle_auth_response(
 
     let d_tag = event.tags.iter().find_map(|tag| {
         if let Tag::Identifier(pk) = tag {
-            XOnlyPublicKey::from_str(pk).ok()
+            PublicKey::from_str(pk).ok()
         } else {
             None
         }
@@ -296,7 +299,7 @@ async fn handle_auth_response(
         )
         .unwrap()
         .private_key;
-    let content = decrypt(&secret, &event.pubkey, &event.content)?;
+    let content = decrypt(&secret.into(), &event.pubkey, &event.content)?;
     let confirmation: NIP49Confirmation = serde_json::from_str(&content)?;
 
     if !confirmation.commands.contains(&Method::PayInvoice) {
@@ -410,7 +413,7 @@ async fn handle_live_chat(
     event: Event,
     keys: &Keys,
     xpriv: ExtendedPrivKey,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+    lnurl_cache: Arc<Mutex<HashMap<PublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
@@ -440,12 +443,18 @@ async fn handle_live_chat(
     let (user_key, a_tag) = match p_tag {
         Some(p) => (p, None),
         None => {
-            let a_tag = tags.into_iter().find(|t| t.kind() == TagKind::A);
+            let a_tag = tags.into_iter().find(|t| {
+                t.kind()
+                    == TagKind::SingleLetter(SingleLetterTag {
+                        character: Alphabet::A,
+                        uppercase: false,
+                    })
+            });
             let user_key = a_tag.as_ref().and_then(|tag| {
                 let tag = tag.as_vec();
                 let kpi: Vec<&str> = tag[1].split(':').collect();
                 let kind = Kind::from_str(kpi[0]).ok();
-                let pk = XOnlyPublicKey::from_str(kpi[1]).ok();
+                let pk = PublicKey::from_str(kpi[1]).ok();
 
                 if kind.is_some_and(|k| k.as_u64() == 30311) {
                     pk
@@ -482,7 +491,7 @@ async fn handle_reaction(
     event: Event,
     keys: &Keys,
     xpriv: ExtendedPrivKey,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+    lnurl_cache: Arc<Mutex<HashMap<PublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let mut tags = event.tags.clone();
@@ -529,7 +538,7 @@ async fn handle_reaction(
 }
 
 async fn pay_user(
-    user_key: XOnlyPublicKey,
+    user_key: PublicKey,
     event_id: Option<EventId>,
     a_tag: Option<Tag>,
     db_pool: &Pool<ConnectionManager<PgConnection>>,
@@ -537,7 +546,7 @@ async fn pay_user(
     event: Event,
     keys: &Keys,
     xpriv: ExtendedPrivKey,
-    lnurl_cache: Arc<Mutex<HashMap<XOnlyPublicKey, LnUrlCacheResult>>>,
+    lnurl_cache: Arc<Mutex<HashMap<PublicKey, LnUrlCacheResult>>>,
     pay_cache: Arc<Mutex<HashMap<LnUrl, PayResponse>>>,
 ) -> anyhow::Result<()> {
     let content = if event.kind == Kind::Reaction {

@@ -2,7 +2,7 @@ use super::schema::donations;
 use crate::models::zap_config::ZapConfig;
 use diesel::prelude::*;
 use lnurl::lnurl::LnUrl;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -43,7 +43,7 @@ impl Donation {
     pub fn new(
         config_id: i32,
         lnurl: Option<&LnUrl>,
-        npub: Option<XOnlyPublicKey>,
+        npub: Option<PublicKey>,
         amount: i32,
     ) -> Self {
         Self {
@@ -61,10 +61,10 @@ impl Donation {
             .map(|l| LnUrl::from_str(l).expect("invalid lnurl"))
     }
 
-    pub fn npub(&self) -> Option<XOnlyPublicKey> {
+    pub fn npub(&self) -> Option<PublicKey> {
         self.npub
             .as_ref()
-            .map(|l| XOnlyPublicKey::from_str(l).expect("invalid npub"))
+            .map(|l| PublicKey::from_str(l).expect("invalid npub"))
     }
 
     pub fn amount_msats(&self) -> u64 {

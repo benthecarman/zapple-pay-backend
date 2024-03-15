@@ -18,14 +18,14 @@ use diesel::PgConnection;
 use diesel_migrations::MigrationHarness;
 use lnurl::lnurl::LnUrl;
 use log::{error, info};
-use nostr::key::{SecretKey, XOnlyPublicKey};
-use nostr::{Keys, SECP256K1};
+use nostr::{Keys, PublicKey, SecretKey, ToBech32, SECP256K1};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_reader, to_string};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch::Sender;
@@ -46,9 +46,9 @@ const DEFAULT_AUTH_RELAY: &str = "wss://relay.mutinywallet.com";
 #[derive(Clone)]
 pub struct State {
     db_pool: Pool<ConnectionManager<PgConnection>>,
-    pubkey_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
-    secret_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
-    auth_channel: Arc<Mutex<Sender<Vec<XOnlyPublicKey>>>>,
+    pubkey_channel: Arc<Mutex<Sender<Vec<PublicKey>>>>,
+    secret_channel: Arc<Mutex<Sender<Vec<PublicKey>>>>,
+    auth_channel: Arc<Mutex<Sender<Vec<PublicKey>>>>,
     pub server_keys: Keys,
     pub xpriv: ExtendedPrivKey,
 }
@@ -98,10 +98,10 @@ async fn main() -> anyhow::Result<()> {
     drop(connection);
 
     // convert to pubkeys and hex
-    let mut secrets = secrets
+    let mut secrets: Vec<PublicKey> = secrets
         .into_iter()
-        .map(|s| s.x_only_public_key(&SECP256K1).0)
-        .collect::<Vec<_>>();
+        .map(|s| s.x_only_public_key(&SECP256K1).0.into())
+        .collect();
     secrets.extend(auth_pubkeys);
 
     let (pubkey_sender, pubkey_receiver) = watch::channel(pubkeys);
@@ -266,7 +266,7 @@ async fn fallback(uri: Uri) -> (StatusCode, String) {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ZapplePayKeys {
-    server_key: SecretKey,
+    server_key: String,
 }
 
 impl ZapplePayKeys {
@@ -274,16 +274,21 @@ impl ZapplePayKeys {
         let server_key = Keys::generate();
 
         ZapplePayKeys {
-            server_key: server_key.secret_key().unwrap(),
+            server_key: server_key
+                .secret_key()
+                .unwrap()
+                .to_bech32()
+                .expect("bech32"),
         }
     }
 
     fn server_keys(&self) -> Keys {
-        Keys::new(self.server_key)
+        Keys::from_str(&self.server_key).expect("Could not parse secret key")
     }
 
     fn xprivkey(&self) -> ExtendedPrivKey {
-        ExtendedPrivKey::new_master(Network::Bitcoin, &self.server_key.secret_bytes()).unwrap()
+        let secret_bytes = SecretKey::parse(&self.server_key).unwrap().secret_bytes();
+        ExtendedPrivKey::new_master(Network::Bitcoin, &secret_bytes).unwrap()
     }
 }
 

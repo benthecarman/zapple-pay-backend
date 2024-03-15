@@ -2,7 +2,7 @@ use crate::models::ConfigType;
 use chrono::NaiveDateTime;
 use diesel::dsl::sum;
 use diesel::prelude::*;
-use nostr::key::XOnlyPublicKey;
+use nostr::key::PublicKey;
 use nostr::prelude::SecretKey;
 use nostr::{EventId, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -50,12 +50,12 @@ pub struct NewZapEvent<'a> {
 
 impl ZapEvent {
     #[allow(clippy::wrong_self_convention)]
-    pub fn from_npub(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from_str(&self.from_npub).expect("Invalid XOnlyPublicKey")
+    pub fn from_npub(&self) -> PublicKey {
+        PublicKey::from_str(&self.from_npub).expect("Invalid PublicKey")
     }
 
-    pub fn to_npub(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from_str(&self.to_npub).expect("Invalid XOnlyPublicKey")
+    pub fn to_npub(&self) -> PublicKey {
+        PublicKey::from_str(&self.to_npub).expect("Invalid PublicKey")
     }
 
     pub fn config_type(&self) -> ConfigType {
@@ -93,8 +93,8 @@ impl ZapEvent {
 
     pub fn create_zap_event(
         conn: &mut PgConnection,
-        from_npub: &XOnlyPublicKey,
-        to_npub: &XOnlyPublicKey,
+        from_npub: &PublicKey,
+        to_npub: &PublicKey,
         config_type: ConfigType,
         amount: i32,
         secret_key: SecretKey,

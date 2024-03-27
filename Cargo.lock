@@ -2887,7 +2887,6 @@ dependencies = [
  "hex",
  "itertools",
  "lazy_static",
- "lightning",
  "lightning-invoice",
  "lnurl-rs",
  "log",

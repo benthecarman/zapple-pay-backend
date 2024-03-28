@@ -9,8 +9,8 @@ use nostr::{EventId, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use super::schema::zap_events;
 use super::schema::zap_events_to_subscription_configs;
+use super::schema::{zap_events, zap_events_to_zap_configs};
 
 #[derive(
     Queryable,
@@ -162,10 +162,13 @@ impl ZapEvent {
         Ok(zap_event)
     }
 
-    pub fn get_unpaid_subscription_zaps(conn: &mut PgConnection) -> anyhow::Result<Vec<ZapEvent>> {
+    pub fn get_unpaid_zaps(
+        conn: &mut PgConnection,
+        cfg_type: ConfigType,
+    ) -> anyhow::Result<Vec<ZapEvent>> {
         let zaps = zap_events::table
             .filter(zap_events::paid_at.is_null())
-            .filter(zap_events::config_type.eq(ConfigType::Subscription.to_string()))
+            .filter(zap_events::config_type.eq(cfg_type.to_string()))
             .load::<ZapEvent>(conn)?;
         Ok(zaps)
     }
@@ -182,6 +185,25 @@ impl ZapEvent {
         let zap_event = zap_events
             .inner_join(zap_events_to_subscription_configs::table)
             .filter(zap_events_to_subscription_configs::subscription_config_id.eq(config_id))
+            .select(dsl::zap_events::all_columns())
+            .first(conn)
+            .optional()?;
+
+        Ok(zap_event)
+    }
+
+    pub fn find_newest_zap_event_for_zap_config(
+        conn: &mut PgConnection,
+        config_id: i32,
+        best_time: NaiveDateTime,
+    ) -> anyhow::Result<Option<ZapEvent>> {
+        let zap_events = zap_events::table
+            .filter(zap_events::paid_at.is_not_null())
+            .filter(zap_events::created_at.gt(best_time));
+
+        let zap_event = zap_events
+            .inner_join(zap_events_to_zap_configs::table)
+            .filter(zap_events_to_zap_configs::zap_config_id.eq(config_id))
             .select(dsl::zap_events::all_columns())
             .first(conn)
             .optional()?;

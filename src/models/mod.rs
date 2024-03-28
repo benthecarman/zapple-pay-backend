@@ -5,6 +5,7 @@ use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::{NewZapConfig, ZapConfig};
 use crate::models::zap_event::ZapEvent;
 use crate::models::zap_event_to_subscription_config::ZapEventToSubscriptionConfig;
+use crate::models::zap_event_to_zap_config::ZapEventToZapConfig;
 use crate::routes::{CreateUserSubscription, SetUserConfig};
 use diesel::prelude::*;
 use diesel::result::Error;
@@ -323,13 +324,90 @@ pub fn delete_user_subscription(
 pub fn do_prunes(conn: &mut PgConnection) -> anyhow::Result<usize> {
     let mut num = SubscriptionConfig::prune_unpaid(conn)?;
     num += prune_dead_subscriptions(conn)?;
+    num += prune_dead_zap_configs(conn)?;
 
     Ok(num)
 }
 
+pub(crate) fn prune_dead_zap_configs(conn: &mut PgConnection) -> anyhow::Result<usize> {
+    conn.transaction(|conn| {
+        let unpaid_zaps = ZapEvent::get_unpaid_zaps(conn, ConfigType::Zap)?;
+        let links = ZapEventToZapConfig::find_by_zap_event_ids(
+            conn,
+            unpaid_zaps.iter().map(|zap| zap.id).collect(),
+        )?;
+        // group by zap config id
+        let grouped: HashMap<i32, Vec<i32>> =
+            links.into_iter().fold(HashMap::new(), |mut acc, link| {
+                acc.entry(link.zap_config_id)
+                    .or_default()
+                    .push(link.zap_event_id);
+                acc
+            });
+
+        let mut dead_configs: Vec<i32> = Vec::with_capacity(grouped.len());
+        for (config_id, zap_ids) in grouped {
+            if zap_ids.len() >= 100 {
+                // try to newer successful zap
+                let best_zap = unpaid_zaps
+                    .iter()
+                    .find(|zap| zap_ids.contains(&zap.id))
+                    .unwrap();
+                let best_time = best_zap.created_at;
+                // join with ZapEventToZapConfig to find event with higher best time, paid_at and same config_id
+                let opt =
+                    ZapEvent::find_newest_zap_event_for_zap_config(conn, config_id, best_time)?;
+                match opt {
+                    Some(zap) => {
+                        info!(
+                            "Found a newer zap event at {:?}, not deleting!",
+                            zap.paid_at
+                        );
+                        // delete zap events so we don't try to pay them again
+                        diesel::delete(
+                            schema::zap_events::table
+                                .filter(schema::zap_events::id.eq_any(&zap_ids)),
+                        )
+                        .execute(conn)?;
+                    }
+                    None => {
+                        // mark for deletion
+                        dead_configs.push(config_id);
+                        // delete zap events
+                        diesel::delete(
+                            schema::zap_events::table
+                                .filter(schema::zap_events::id.eq_any(&zap_ids)),
+                        )
+                        .execute(conn)?;
+                        // delete links
+                        diesel::delete(schema::zap_events_to_zap_configs::table.filter(
+                            schema::zap_events_to_zap_configs::zap_event_id.eq_any(zap_ids),
+                        ))
+                        .execute(conn)?;
+                    }
+                }
+            }
+        }
+
+        // delete donation configs
+        diesel::delete(
+            schema::donations::table.filter(schema::donations::config_id.eq_any(&dead_configs)),
+        )
+        .execute(conn)?;
+
+        // delete zap configs
+        let num = diesel::delete(
+            schema::zap_configs::table.filter(schema::zap_configs::id.eq_any(&dead_configs)),
+        )
+        .execute(conn)?;
+
+        Ok(num)
+    })
+}
+
 pub(crate) fn prune_dead_subscriptions(conn: &mut PgConnection) -> anyhow::Result<usize> {
     conn.transaction(|conn| {
-        let unpaid_zaps = ZapEvent::get_unpaid_subscription_zaps(conn)?;
+        let unpaid_zaps = ZapEvent::get_unpaid_zaps(conn, ConfigType::Subscription)?;
         let links = ZapEventToSubscriptionConfig::find_by_zap_event_ids(
             conn,
             unpaid_zaps.iter().map(|zap| zap.id).collect(),
@@ -425,6 +503,7 @@ pub fn delete_subscribed_user(
 mod test {
     use super::*;
     use crate::nip49::SubscriptionPeriod;
+    use crate::routes::DonationConfig;
     use bitcoin::bip32::ExtendedPrivKey;
     use bitcoin::Network;
     use chrono::{NaiveDateTime, Utc};
@@ -639,7 +718,7 @@ mod test {
         }
 
         // get unpaid subscriptions
-        let unpaid_zaps = ZapEvent::get_unpaid_subscription_zaps(&mut conn).unwrap();
+        let unpaid_zaps = ZapEvent::get_unpaid_zaps(&mut conn, ConfigType::Subscription).unwrap();
         assert_eq!(unpaid_zaps.len(), 11);
         let links = ZapEventToSubscriptionConfig::find_by_zap_event_ids(
             &mut conn,
@@ -682,6 +761,114 @@ mod test {
     fn test_clear_dead_subscriptions() {
         do_test_clear_dead_subscriptions(true);
         do_test_clear_dead_subscriptions(false);
+    }
+
+    fn do_test_clear_dead_zap_configs(expect_prune: bool) {
+        let mut conn = init_db();
+
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
+
+        // create a zap config
+        let emoji = "🍕".to_string();
+        let donation = DonationConfig {
+            amount_sats: 5,
+            lnurl: None,
+            npub: Some(to_npub),
+        };
+        let config = SetUserConfig {
+            npub,
+            amount_sats: 100,
+            nwc: Some(nwc),
+            auth_id: None,
+            emoji: Some(emoji.clone()),
+            donations: Some(vec![donation]),
+        };
+        upsert_user(&mut conn, config).unwrap();
+
+        let config = ZapConfig::get_by_pubkey_and_emoji(&mut conn, &npub, &emoji)
+            .unwrap()
+            .unwrap();
+
+        let zap_event = ZapEvent::create_zap_event(
+            &mut conn,
+            &npub,
+            &to_npub,
+            ConfigType::Zap,
+            100,
+            xpriv.private_key.into(),
+            [0; 32],
+            EventId::from_slice(&[0xff; 32]).unwrap(),
+        )
+        .unwrap();
+        ZapEventToZapConfig::new(&mut conn, zap_event.id, config.id).unwrap();
+
+        // should not delete zap config
+        let num = prune_dead_zap_configs(&mut conn).unwrap();
+        assert_eq!(num, 0);
+
+        // make a bunch of unpaid zaps
+        for i in 0..100 {
+            let zap_event = ZapEvent::create_zap_event(
+                &mut conn,
+                &npub,
+                &to_npub,
+                ConfigType::Zap,
+                100,
+                xpriv.private_key.into(),
+                [0; 32],
+                EventId::from_slice(&[i; 32]).unwrap(),
+            )
+            .unwrap();
+            ZapEventToZapConfig::new(&mut conn, zap_event.id, config.id).unwrap();
+        }
+
+        // get unpaid zap events
+        let unpaid_zaps = ZapEvent::get_unpaid_zaps(&mut conn, ConfigType::Zap).unwrap();
+        assert_eq!(unpaid_zaps.len(), 101);
+        let links = ZapEventToZapConfig::find_by_zap_event_ids(
+            &mut conn,
+            unpaid_zaps.iter().map(|zap| zap.id).collect(),
+        )
+        .unwrap();
+        assert_eq!(links.len(), 101);
+
+        // make one paid zap
+        let paid = ZapEvent::create_zap_event(
+            &mut conn,
+            &npub,
+            &to_npub,
+            ConfigType::Zap,
+            100,
+            xpriv.private_key.into(),
+            [0; 32],
+            EventId::from_slice(&[0xfd; 32]).unwrap(),
+        )
+        .unwrap();
+        ZapEventToZapConfig::new(&mut conn, paid.id, config.id).unwrap();
+        ZapEvent::mark_zap_paid(&mut conn, paid.event_id(), Timestamp::now()).unwrap();
+
+        if expect_prune {
+            // delete paid zap
+            ZapEvent::delete_by_event_id(&mut conn, paid.event_id()).unwrap();
+            // should delete zap config
+            let num = prune_dead_zap_configs(&mut conn).unwrap();
+            assert_eq!(num, 1);
+        } else {
+            // should not delete zap config
+            let num = prune_dead_zap_configs(&mut conn).unwrap();
+            assert_eq!(num, 0);
+        }
+
+        clear_database(&mut conn)
+    }
+
+    #[test]
+    fn test_clear_dead_zap_configs() {
+        do_test_clear_dead_zap_configs(true);
+        do_test_clear_dead_zap_configs(false);
     }
 
     #[test]

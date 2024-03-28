@@ -231,8 +231,8 @@ async fn main() -> anyhow::Result<()> {
         loop {
             if let Ok(mut conn) = db_pool.get() {
                 match models::do_prunes(&mut conn) {
-                    Err(e) => error!("prune subscriptions error: {e}"),
-                    Ok(num) => info!("pruned {num} subscriptions"),
+                    Err(e) => error!("prune error: {e}"),
+                    Ok(num) => info!("pruned {num} subscription/zap configs"),
                 }
             }
             // prune every day

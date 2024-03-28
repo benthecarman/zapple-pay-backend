@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("Could not build connection pool");
 
     // run migrations
+    info!("Running migrations");
     let mut connection = db_pool.get()?;
     connection
         .run_pending_migrations(MIGRATIONS)

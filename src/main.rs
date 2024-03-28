@@ -235,8 +235,8 @@ async fn main() -> anyhow::Result<()> {
                     Ok(num) => info!("pruned {num} subscriptions"),
                 }
             }
-            // prune every 6 hours
-            tokio::time::sleep(tokio::time::Duration::from_secs(6 * 60 * 60)).await;
+            // prune every day
+            tokio::time::sleep(tokio::time::Duration::from_secs(86_400)).await;
         }
     });
 

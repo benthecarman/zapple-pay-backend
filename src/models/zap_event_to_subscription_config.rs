@@ -37,6 +37,15 @@ impl ZapEventToSubscriptionConfig {
             .optional()?;
         Ok(zap_event)
     }
+    pub fn find_by_zap_event_ids(
+        conn: &mut PgConnection,
+        event_ids: Vec<i32>,
+    ) -> anyhow::Result<Vec<Self>> {
+        let zap_events = zap_events_to_subscription_configs::table
+            .filter(zap_events_to_subscription_configs::zap_event_id.eq_any(event_ids))
+            .load::<Self>(conn)?;
+        Ok(zap_events)
+    }
 
     pub fn delete_by_zap_event_id(
         conn: &mut PgConnection,

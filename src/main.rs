@@ -224,6 +224,21 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // subscription pruner
+    let db_pool = state.db_pool.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(mut conn) = db_pool.get() {
+                match models::do_prunes(&mut conn) {
+                    Err(e) => error!("prune subscriptions error: {e}"),
+                    Ok(num) => info!("pruned {num} subscriptions"),
+                }
+            }
+            // prune every 6 hours
+            tokio::time::sleep(tokio::time::Duration::from_secs(6 * 60 * 60)).await;
+        }
+    });
+
     tokio::spawn(async move {
         match subscription_handler::populate_lnurl_cache(subscription_to_npubs, lnurl_cache.clone())
             .await

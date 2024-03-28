@@ -3,14 +3,17 @@ use crate::models::subscription_config::{NewSubscriptionConfig, SubscriptionConf
 use crate::models::user::NewUser;
 use crate::models::wallet_auth::WalletAuth;
 use crate::models::zap_config::{NewZapConfig, ZapConfig};
+use crate::models::zap_event::ZapEvent;
+use crate::models::zap_event_to_subscription_config::ZapEventToSubscriptionConfig;
 use crate::routes::{CreateUserSubscription, SetUserConfig};
 use diesel::prelude::*;
 use diesel::result::Error;
 use diesel::upsert::on_constraint;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
-use log::error;
+use log::{error, info};
 use nostr::PublicKey;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 pub mod donation;
@@ -317,6 +320,87 @@ pub fn delete_user_subscription(
     })
 }
 
+pub fn do_prunes(conn: &mut PgConnection) -> anyhow::Result<usize> {
+    let mut num = SubscriptionConfig::prune_unpaid(conn)?;
+    num += prune_dead_subscriptions(conn)?;
+
+    Ok(num)
+}
+
+pub(crate) fn prune_dead_subscriptions(conn: &mut PgConnection) -> anyhow::Result<usize> {
+    conn.transaction(|conn| {
+        let unpaid_zaps = ZapEvent::get_unpaid_subscription_zaps(conn)?;
+        let links = ZapEventToSubscriptionConfig::find_by_zap_event_ids(
+            conn,
+            unpaid_zaps.iter().map(|zap| zap.id).collect(),
+        )?;
+        // group by subscription config id
+        let grouped: HashMap<i32, Vec<i32>> =
+            links.into_iter().fold(HashMap::new(), |mut acc, link| {
+                acc.entry(link.subscription_config_id)
+                    .or_default()
+                    .push(link.zap_event_id);
+                acc
+            });
+
+        let mut dead_configs: Vec<i32> = Vec::with_capacity(grouped.len());
+        for (config_id, zap_ids) in grouped {
+            if zap_ids.len() >= 5 {
+                // try to newer successful zap
+                let best_zap = unpaid_zaps
+                    .iter()
+                    .find(|zap| zap_ids.contains(&zap.id))
+                    .unwrap();
+                let best_time = best_zap.created_at;
+                // join with ZapEventToSubscriptionConfig to find event with higher best time, paid_at and same config_id
+                let opt =
+                    ZapEvent::find_newest_zap_event_for_subscription(conn, config_id, best_time)?;
+                match opt {
+                    Some(zap) => {
+                        info!(
+                            "Found a newer zap event at {:?}, not deleting!",
+                            zap.paid_at
+                        );
+                        // delete zap events so we don't try to pay them again
+                        diesel::delete(
+                            schema::zap_events::table
+                                .filter(schema::zap_events::id.eq_any(&zap_ids)),
+                        )
+                        .execute(conn)?;
+                    }
+                    None => {
+                        // mark for deletion
+                        dead_configs.push(config_id);
+                        // delete zap events
+                        diesel::delete(
+                            schema::zap_events::table
+                                .filter(schema::zap_events::id.eq_any(&zap_ids)),
+                        )
+                        .execute(conn)?;
+                        // delete links
+                        diesel::delete(
+                            schema::zap_events_to_subscription_configs::table.filter(
+                                schema::zap_events_to_subscription_configs::zap_event_id
+                                    .eq_any(zap_ids),
+                            ),
+                        )
+                        .execute(conn)?;
+                    }
+                }
+            }
+        }
+
+        // delete subscription configs
+        let num = diesel::delete(
+            schema::subscription_configs::table
+                .filter(schema::subscription_configs::id.eq_any(&dead_configs)),
+        )
+        .execute(conn)?;
+
+        Ok(num)
+    })
+}
+
 #[allow(dead_code)]
 pub fn delete_subscribed_user(
     conn: &mut PgConnection,
@@ -343,9 +427,10 @@ mod test {
     use crate::nip49::SubscriptionPeriod;
     use bitcoin::bip32::ExtendedPrivKey;
     use bitcoin::Network;
+    use chrono::{NaiveDateTime, Utc};
     use diesel_migrations::MigrationHarness;
     use nostr::prelude::NostrWalletConnectURI;
-    use nostr::SECP256K1;
+    use nostr::{EventId, Timestamp, SECP256K1};
 
     const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
     const PUBKEY2: &str = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2";
@@ -493,6 +578,183 @@ mod test {
         assert_eq!(new_nwc.secret.x_only_public_key(&SECP256K1).0, *auth_id);
         assert_eq!(new_nwc.relay_url.to_string(), relay);
         assert_ne!(new_nwc, nwc);
+
+        clear_database(&mut conn)
+    }
+
+    fn do_test_clear_dead_subscriptions(expect_prune: bool) {
+        let mut conn = init_db();
+
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
+
+        // create a subscription
+        let config = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 100,
+            time_period: SubscriptionPeriod::Day,
+            nwc: Some(nwc),
+            auth_id: None,
+        };
+        upsert_subscription(&mut conn, config).unwrap();
+
+        let config = SubscriptionConfig::get_by_pubkey_and_to_npub(&mut conn, &npub, &to_npub)
+            .unwrap()
+            .unwrap();
+
+        let zap_event = ZapEvent::create_zap_event(
+            &mut conn,
+            &npub,
+            &to_npub,
+            ConfigType::Subscription,
+            100,
+            xpriv.private_key.into(),
+            [0; 32],
+            EventId::from_slice(&[0xff; 32]).unwrap(),
+        )
+        .unwrap();
+        ZapEventToSubscriptionConfig::new(&mut conn, zap_event.id, config.id).unwrap();
+
+        // should not delete subscription
+        let num = prune_dead_subscriptions(&mut conn).unwrap();
+        assert_eq!(num, 0);
+
+        // make a bunch of unpaid zaps
+        for i in 0..10 {
+            let zap_event = ZapEvent::create_zap_event(
+                &mut conn,
+                &npub,
+                &to_npub,
+                ConfigType::Subscription,
+                100,
+                xpriv.private_key.into(),
+                [0; 32],
+                EventId::from_slice(&[i; 32]).unwrap(),
+            )
+            .unwrap();
+            ZapEventToSubscriptionConfig::new(&mut conn, zap_event.id, config.id).unwrap();
+        }
+
+        // get unpaid subscriptions
+        let unpaid_zaps = ZapEvent::get_unpaid_subscription_zaps(&mut conn).unwrap();
+        assert_eq!(unpaid_zaps.len(), 11);
+        let links = ZapEventToSubscriptionConfig::find_by_zap_event_ids(
+            &mut conn,
+            unpaid_zaps.iter().map(|zap| zap.id).collect(),
+        )
+        .unwrap();
+        assert_eq!(links.len(), 11);
+
+        // make one paid zap
+        let paid = ZapEvent::create_zap_event(
+            &mut conn,
+            &npub,
+            &to_npub,
+            ConfigType::Subscription,
+            100,
+            xpriv.private_key.into(),
+            [0; 32],
+            EventId::from_slice(&[0xfd; 32]).unwrap(),
+        )
+        .unwrap();
+        ZapEventToSubscriptionConfig::new(&mut conn, paid.id, config.id).unwrap();
+        ZapEvent::mark_zap_paid(&mut conn, paid.event_id(), Timestamp::now()).unwrap();
+
+        if expect_prune {
+            // delete paid zap
+            ZapEvent::delete_by_event_id(&mut conn, paid.event_id()).unwrap();
+            // should delete subscription
+            let num = prune_dead_subscriptions(&mut conn).unwrap();
+            assert_eq!(num, 1);
+        } else {
+            // should not delete subscription
+            let num = prune_dead_subscriptions(&mut conn).unwrap();
+            assert_eq!(num, 0);
+        }
+
+        clear_database(&mut conn)
+    }
+
+    #[test]
+    fn test_clear_dead_subscriptions() {
+        do_test_clear_dead_subscriptions(true);
+        do_test_clear_dead_subscriptions(false);
+    }
+
+    #[test]
+    fn test_prune_subscription() {
+        let mut conn = init_db();
+
+        let npub = PublicKey::from_str(PUBKEY).unwrap();
+        let to_npub = PublicKey::from_str(PUBKEY2).unwrap();
+        let nwc = NostrWalletConnectURI::from_str(NWC).unwrap();
+        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &[0; 32]).unwrap();
+
+        let config = CreateUserSubscription {
+            npub,
+            to_npub,
+            amount_sats: 100,
+            time_period: SubscriptionPeriod::Day,
+            nwc: Some(nwc.clone()),
+            auth_id: None,
+        };
+
+        upsert_subscription(&mut conn, config).unwrap();
+
+        let config = SubscriptionConfig::get_by_pubkey_and_to_npub(&mut conn, &npub, &to_npub)
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.amount, 100);
+        assert_eq!(config.time_period(), SubscriptionPeriod::Day);
+        assert_eq!(config.nwc(xpriv, None, None), nwc);
+
+        // should not prune, it hasn't even attempted to pay
+        let num = SubscriptionConfig::prune_unpaid(&mut conn).unwrap();
+        assert_eq!(num, 0);
+
+        // set last paid to now
+        let now = Utc::now();
+        diesel::update(schema::subscription_configs::table)
+            .set(schema::subscription_configs::last_paid.eq(Some(now)))
+            .execute(&mut conn)
+            .unwrap();
+
+        // should not prune, it just paid
+        let num = SubscriptionConfig::prune_unpaid(&mut conn).unwrap();
+        assert_eq!(num, 0);
+
+        // set last paid to 1.5 periods ago
+        let diff: i64 = (86_400.0 * 1.5) as i64;
+        let small_time_ago = NaiveDateTime::from_timestamp_opt(now.timestamp() - diff, 0)
+            .expect("Invalid timestamp");
+        diesel::update(schema::subscription_configs::table)
+            .set(schema::subscription_configs::last_paid.eq(Some(small_time_ago)))
+            .execute(&mut conn)
+            .unwrap();
+
+        // should not prune, not far enough back
+        let num = SubscriptionConfig::prune_unpaid(&mut conn).unwrap();
+        assert_eq!(num, 0);
+
+        // set last paid to 6 periods ago
+        let diff: i64 = 86_400 * 6;
+        let too_far_ago = NaiveDateTime::from_timestamp_opt(now.timestamp() - diff, 0)
+            .expect("Invalid timestamp");
+        diesel::update(schema::subscription_configs::table)
+            .set(schema::subscription_configs::last_paid.eq(Some(too_far_ago)))
+            .execute(&mut conn)
+            .unwrap();
+
+        // should not prune, not far enough back
+        let num = SubscriptionConfig::prune_unpaid(&mut conn).unwrap();
+        assert_eq!(num, 1);
+
+        let config =
+            SubscriptionConfig::get_by_pubkey_and_to_npub(&mut conn, &npub, &to_npub).unwrap();
+        assert_eq!(config, None);
 
         clear_database(&mut conn)
     }

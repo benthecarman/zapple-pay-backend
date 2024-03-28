@@ -1,3 +1,4 @@
+use crate::models::schema::zap_events::dsl;
 use crate::models::ConfigType;
 use chrono::NaiveDateTime;
 use diesel::dsl::sum;
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 use super::schema::zap_events;
+use super::schema::zap_events_to_subscription_configs;
 
 #[derive(
     Queryable,
@@ -29,11 +31,11 @@ pub struct ZapEvent {
     to_npub: String,
     config_type: String,
     amount: i32,
-    created_at: NaiveDateTime,
+    pub created_at: NaiveDateTime,
     secret_key: String,
     pub payment_hash: String,
     event_id: String,
-    paid_at: Option<NaiveDateTime>,
+    pub paid_at: Option<NaiveDateTime>,
 }
 
 #[derive(Insertable, AsChangeset)]
@@ -64,6 +66,10 @@ impl ZapEvent {
 
     pub fn secret_key(&self) -> SecretKey {
         SecretKey::from_str(&self.secret_key).expect("Invalid SecretKey")
+    }
+
+    pub fn event_id(&self) -> EventId {
+        EventId::from_str(&self.event_id).expect("Invalid EventId")
     }
 
     pub fn get_zap_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
@@ -153,6 +159,33 @@ impl ZapEvent {
             .filter(zap_events::event_id.eq(event_id.to_hex()))
             .set(zap_events::paid_at.eq(time))
             .get_result(conn)?;
+        Ok(zap_event)
+    }
+
+    pub fn get_unpaid_subscription_zaps(conn: &mut PgConnection) -> anyhow::Result<Vec<ZapEvent>> {
+        let zaps = zap_events::table
+            .filter(zap_events::paid_at.is_null())
+            .filter(zap_events::config_type.eq(ConfigType::Subscription.to_string()))
+            .load::<ZapEvent>(conn)?;
+        Ok(zaps)
+    }
+
+    pub fn find_newest_zap_event_for_subscription(
+        conn: &mut PgConnection,
+        config_id: i32,
+        best_time: NaiveDateTime,
+    ) -> anyhow::Result<Option<ZapEvent>> {
+        let zap_events = zap_events::table
+            .filter(zap_events::paid_at.is_not_null())
+            .filter(zap_events::created_at.gt(best_time));
+
+        let zap_event = zap_events
+            .inner_join(zap_events_to_subscription_configs::table)
+            .filter(zap_events_to_subscription_configs::subscription_config_id.eq(config_id))
+            .select(dsl::zap_events::all_columns())
+            .first(conn)
+            .optional()?;
+
         Ok(zap_event)
     }
 }

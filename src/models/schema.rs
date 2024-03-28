@@ -88,6 +88,7 @@ diesel::joinable!(subscription_configs -> users (user_id));
 diesel::joinable!(subscription_configs -> wallet_auth (auth_index));
 diesel::joinable!(zap_configs -> users (user_id));
 diesel::joinable!(zap_configs -> wallet_auth (auth_index));
+diesel::joinable!(zap_events_to_subscription_configs -> zap_events (zap_event_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     donations,

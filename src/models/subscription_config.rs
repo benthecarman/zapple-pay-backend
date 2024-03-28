@@ -117,6 +117,13 @@ impl SubscriptionConfig {
         }
     }
 
+    pub fn needs_prune(&self) -> bool {
+        match self.last_paid {
+            None => false,
+            Some(last_paid) => last_paid < self.time_period().five_periods_ago(),
+        }
+    }
+
     pub fn get_config_count(conn: &mut PgConnection) -> anyhow::Result<i64> {
         let count = subscription_configs::table.count().get_result(conn)?;
         Ok(count)
@@ -237,5 +244,22 @@ impl SubscriptionConfig {
         diesel::delete(subscription_configs::table.filter(subscription_configs::id.eq(id)))
             .execute(conn)?;
         Ok(())
+    }
+
+    pub fn prune_unpaid(conn: &mut PgConnection) -> anyhow::Result<usize> {
+        conn.transaction(|conn| {
+            let unpaid_configs = SubscriptionConfig::get_needs_payment(conn)?;
+            let unpaid_configs = unpaid_configs
+                .into_iter()
+                .filter(|config| config.needs_prune())
+                .map(|config| config.id)
+                .collect::<Vec<_>>();
+
+            Ok(diesel::delete(
+                subscription_configs::table
+                    .filter(subscription_configs::id.eq_any(&unpaid_configs)),
+            )
+            .execute(conn)?)
+        })
     }
 }

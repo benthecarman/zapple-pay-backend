@@ -1,0 +1,2 @@
+ALTER TABLE zap_events_to_subscription_configs
+    DROP CONSTRAINT fk_zap_events_to_subscription_configs_zap_event_id;

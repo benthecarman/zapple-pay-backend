@@ -53,7 +53,7 @@ impl SubscriptionPeriod {
             SubscriptionPeriod::Hour => now.date_naive().and_hms_opt(now.hour(), 0, 0).unwrap(),
             SubscriptionPeriod::Day => now.date_naive().and_hms_opt(0, 0, 0).unwrap(),
             SubscriptionPeriod::Week => (now
-                - Duration::days((now.weekday().num_days_from_sunday()) as i64))
+                - Duration::days(now.weekday().num_days_from_sunday() as i64))
             .date_naive()
             .and_hms_opt(0, 0, 0)
             .unwrap(),
@@ -68,6 +68,21 @@ impl SubscriptionPeriod {
                 chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             ),
         }
+    }
+
+    // Returns the start of the period that was 5 periods ago
+    pub fn five_periods_ago(&self) -> NaiveDateTime {
+        let now = Utc::now().timestamp();
+        let diff = match self {
+            SubscriptionPeriod::Minute => 60 * 5,
+            SubscriptionPeriod::Hour => 60 * 60 * 5,
+            SubscriptionPeriod::Day => 86_400 * 5,
+            SubscriptionPeriod::Week => 86_400 * 7 * 5,
+            SubscriptionPeriod::Month => 86_400 * 30 * 5,
+            SubscriptionPeriod::Year => 86_400 * 365 * 5,
+        };
+
+        NaiveDateTime::from_timestamp_opt(now - diff, 0).expect("Invalid timestamp")
     }
 }
 

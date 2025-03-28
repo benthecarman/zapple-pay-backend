@@ -117,6 +117,7 @@ impl ZapConfig {
             .flatten()
             .filter_map(|s| NostrWalletConnectURI::from_str(&s).ok())
             .map(|nwc| nwc.relay_url)
+            .filter(|u| !u.to_string().contains("mutinywallet")) // these are dead/old
             .collect();
 
         // count the relays

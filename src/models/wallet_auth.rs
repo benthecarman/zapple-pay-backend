@@ -268,7 +268,7 @@ mod test {
         assert_eq!(user_data, None);
 
         let user_pubkey = PublicKey::from_str(PUBKEY).unwrap();
-        let relay = Some("wss://nostr.mutinywallet.com/".to_string());
+        let relay = Some("wss://relay.damus.io/".to_string());
         WalletAuth::add_user_data(conn, pubkey, user_pubkey, relay.clone()).unwrap();
 
         let user_data = WalletAuth::get_user_data(conn, wallet_auth.index)

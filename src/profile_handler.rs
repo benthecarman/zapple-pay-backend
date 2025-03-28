@@ -173,7 +173,7 @@ async fn get_invoice_from_lnurl(
                     bolt11: None,
                 },
                 Tag::Lnurl(lnurl.to_string()),
-                Tag::Relays(vec!["wss://nostr.mutinywallet.com".into()]),
+                Tag::Relays(vec!["wss://relay.damus.io".into()]),
             ];
             if let Some(event_id) = event_id {
                 tags.push(Tag::Event {

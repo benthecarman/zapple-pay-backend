@@ -146,7 +146,7 @@ async fn send_config_dm(
     amt: u64,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client.add_relay("wss://nostr.mutinywallet.com").await?;
+    client.add_relay("wss://relay.damus.io").await?;
     client.connect().await;
 
     let sats = if amt == 1 { "sat" } else { "sats" };
@@ -168,7 +168,7 @@ async fn send_subscription_dm(
     amt: u64,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client.add_relay("wss://nostr.mutinywallet.com").await?;
+    client.add_relay("wss://relay.damus.io").await?;
     client.connect().await;
 
     let sats = if amt == 1 { "sat" } else { "sats" };
@@ -187,7 +187,7 @@ async fn send_subscription_dm(
 #[cfg(not(test))]
 async fn send_deleted_config_dm(keys: Keys, npub: PublicKey, emoji: String) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client.add_relay("wss://nostr.mutinywallet.com").await?;
+    client.add_relay("wss://relay.damus.io").await?;
     client.connect().await;
 
     let content =
@@ -207,7 +207,7 @@ async fn send_deleted_subscription_dm(
     to_npub: PublicKey,
 ) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client.add_relay("wss://nostr.mutinywallet.com").await?;
+    client.add_relay("wss://relay.damus.io").await?;
     client.connect().await;
 
     let content = format!(
@@ -225,7 +225,7 @@ async fn send_deleted_subscription_dm(
 #[cfg(not(test))]
 async fn send_deleted_user_dm(keys: Keys, npub: PublicKey) -> anyhow::Result<()> {
     let client = nostr_sdk::Client::new(&keys);
-    client.add_relay("wss://nostr.mutinywallet.com").await?;
+    client.add_relay("wss://relay.damus.io").await?;
     client.connect().await;
 
     let content = String::from("You have deleted your Zapple Pay account.");
@@ -869,7 +869,7 @@ mod test {
 
     const PUBKEY: &str = "e1ff3bfdd4e40315959b08b4fcc8245eaa514637e1d4ec2ae166b743341be1af";
     const PUBKEY2: &str = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2";
-    const NWC: &str = "nostr+walletconnect://246be70a7e4966f138e9e48401f33c32a1c428bbfb7aab42e3946beb8bc15e7c?relay=wss%3A%2F%2Fnostr.mutinywallet.com%2F&secret=23ea701003500d852ba2756460099217f839e1fbc9665e493b56bd2d5912e31b";
+    const NWC: &str = "nostr+walletconnect://246be70a7e4966f138e9e48401f33c32a1c428bbfb7aab42e3946beb8bc15e7c?relay=wss%3A%2F%2Frelay.damus.io%2F&secret=23ea701003500d852ba2756460099217f839e1fbc9665e493b56bd2d5912e31b";
 
     fn init_state() -> State {
         dotenv::dotenv().ok();
